@@ -242,7 +242,7 @@
   <div class="modal-content">
     <div class="modal-head">
       <div>
-        <h3 id="eval-emp-name">Evaluate Employee</h3>
+        <h3 id="eval-emp-name">Evaluate User</h3>
         <p>100-Point Monthly KPI Scorecard</p>
       </div>
       <button class="modal-close" onclick="closeEvalModal()">×</button>
@@ -250,7 +250,7 @@
     
     <div class="eval-row">
       <div class="eval-info">
-        <h4>1. Delegated Tasks</h4>
+        <h4>1. Delegated Tasks / Commitments</h4>
         <p>Auto-calculated (30%)</p>
       </div>
       <div class="eval-input"><span class="eval-auto" id="eval-delegated">0</span> / 30</div>
@@ -258,15 +258,15 @@
     
     <div class="eval-row">
       <div class="eval-info">
-        <h4>2. Daily Role KPIs</h4>
-        <p>Auto-calculated Check Lists (35%)</p>
+        <h4>2. Daily Role KPIs / Priorities</h4>
+        <p>Auto-calculated Checklists (35%)</p>
       </div>
       <div class="eval-input"><span class="eval-auto" id="eval-kpi">0</span> / 35</div>
     </div>
 
     <div class="eval-row">
       <div class="eval-info">
-        <h4>3. Goal Contribution</h4>
+        <h4>3. Dept Goal Contribution</h4>
         <p>Manager Review (15%)</p>
       </div>
       <div class="eval-input"><input type="number" id="eval-goals" min="0" max="15" value="0" oninput="updateEvalTotal()"> / 15</div>
@@ -282,7 +282,7 @@
 
     <div class="eval-row">
       <div class="eval-info">
-        <h4>5. Behaviour / Compliance</h4>
+        <h4>5. Behaviour / Process Compliance</h4>
         <p>Manager Review (10%)</p>
       </div>
       <div class="eval-input"><input type="number" id="eval-behaviour" min="0" max="10" value="0" oninput="updateEvalTotal()"> / 10</div>
@@ -422,7 +422,7 @@ document.getElementById('logout-btn').addEventListener('click', ()=>{
 
 /* ---------------- SHELL / TABS ---------------- */
 function renderShell(){
-  let roleLabel = currentUser.role === 'admin' ? 'Admin' : (currentUser.role === 'hod' ? 'Head of Dept' : deptName(currentUser.department));
+  let roleLabel = currentUser.role === 'admin' ? 'Super Admin' : (currentUser.role === 'hod' ? 'Head of Dept' : deptName(currentUser.department));
   document.getElementById('who-badge').textContent = `${currentUser.name} · ${roleLabel}`;
   document.getElementById('topbar-sub').textContent = currentUser.role === 'admin' ? 'Owner / Admin View' : 'Department Task Desk';
 
@@ -486,17 +486,19 @@ function deptStats(code){
 /* ---------------- 100-POINT SCOREBOARD ---------------- */
 function renderScoreboard(el){
   
-  // 1. Group latest evaluation scores by Employee
+  // 1. Group latest evaluation scores by Employee/HOD
   let latestEvals = {};
   EVALUATIONS.forEach(e => {
-    // Basic sorting to get the latest per employee
+    // Basic sorting to get the latest per person
     if(!latestEvals[e.employee_name] || e.created_at > latestEvals[e.employee_name].created_at) {
         latestEvals[e.employee_name] = e;
     }
   });
 
-  // 2. Build Employee Rows
-  let empRows = USERS.filter(u => u.role === 'employee').map(u => {
+  // 2. Build User Rows (Now includes BOTH HODs and Employees)
+  let evalUsers = USERS.filter(u => u.role === 'employee' || u.role === 'hod');
+  
+  let empRows = evalUsers.map(u => {
     let evalData = latestEvals[u.name];
     let totalScore = evalData ? parseFloat(evalData.total_score) : 0;
     
@@ -504,13 +506,23 @@ function renderScoreboard(el){
     let myTasks = TASKS.filter(t => t.assigned_to === u.name);
     let completed = myTasks.filter(t => t.status === 'Done').length;
     let total = myTasks.length;
+    
+    // Hierarchy Check: Can the current person click the Evaluate button?
+    let canEvaluate = false;
+    if (currentUser.role === 'admin') {
+        canEvaluate = true; // Superadmin can evaluate anyone
+    } else if (currentUser.role === 'hod' && u.role === 'employee' && u.department === currentUser.department) {
+        canEvaluate = true; // HOD can only evaluate employees in their own department
+    }
 
     return { 
       name: u.name, 
-      deptCode: u.department, 
+      deptCode: u.department,
+      role: u.role,
       tasksCompleted: completed, 
       tasksTotal: total,
-      kpiScore: totalScore 
+      kpiScore: totalScore,
+      canEvaluate: canEvaluate
     };
   });
   
@@ -518,21 +530,24 @@ function renderScoreboard(el){
   empRows.sort((a,b) => b.kpiScore - a.kpiScore);
 
   let coachTitle = "100-Point HR Scorecard";
-  let coachMsg = "Track comprehensive monthly performance. Scores include automated task completion mixed with Manager evaluations for Goals, Attendance, and Behaviour.";
+  let coachMsg = "Track comprehensive monthly performance across all roles. Super Admin evaluates HODs, and HODs evaluate their team members.";
 
   el.innerHTML = `
-    <div class="section-head"><div><h2>Performance Scoreboard</h2><div class="desc">100-Point Monthly Employee KPI Evaluations</div></div></div>
+    <div class="section-head"><div><h2>Performance Scoreboard</h2><div class="desc">100-Point Monthly KPI Evaluations (Employees & HODs)</div></div></div>
     
     <div class="coach-banner"><div style="font-size:32px;">💡</div><div><h3>${coachTitle}</h3><p>${coachMsg}</p></div></div>
 
-    <h3 style="color:var(--emerald-900); margin-bottom:12px; font-size:18px;">👤 Individual Employee Rankings</h3>
+    <h3 style="color:var(--emerald-900); margin-bottom:12px; font-size:18px;">👤 Company Rankings</h3>
     <table class="users-table">
-      <thead><tr><th>Rank & Employee</th><th>Department</th><th>Task Volume</th><th>Overall KPI Score (Out of 100)</th>${currentUser.role !== 'employee' ? '<th>Action</th>' : ''}</tr></thead>
+      <thead><tr><th>Rank & Name</th><th>Role / Dept</th><th>Task Volume</th><th>Overall KPI Score (Out of 100)</th>${currentUser.role !== 'employee' ? '<th>Action</th>' : ''}</tr></thead>
       <tbody>
         ${empRows.length > 0 ? empRows.map((r, idx)=>`
           <tr>
             <td><strong>#${idx+1} &nbsp; ${escapeHtml(r.name)}</strong></td>
-            <td style="color:var(--ink-500); font-size:12.5px;">${escapeHtml(deptName(r.deptCode))}</td>
+            <td>
+              <span class="role-pill role-${r.role}" style="margin-right:6px;">${r.role.toUpperCase()}</span>
+              <span style="color:var(--ink-500); font-size:12px;">${escapeHtml(deptName(r.deptCode))}</span>
+            </td>
             <td>${r.tasksCompleted} / ${r.tasksTotal} done</td>
             <td>
               <div style="display:flex; align-items:center; gap:10px;">
@@ -540,9 +555,9 @@ function renderScoreboard(el){
                 <span class="mono" style="font-weight:600; font-size:14px; color:${barColor(r.kpiScore)}">${r.kpiScore} Pts</span>
               </div>
             </td>
-            ${currentUser.role !== 'employee' ? `<td><button class="btn btn-ghost btn-sm" onclick="openEvalModal('${escapeAttr(r.name)}')">Evaluate</button></td>` : ''}
+            ${currentUser.role !== 'employee' ? `<td>${r.canEvaluate ? `<button class="btn btn-ghost btn-sm" onclick="openEvalModal('${escapeAttr(r.name)}')">Evaluate</button>` : `<span style="font-size:11px; color:var(--ink-300);">No Access</span>`}</td>` : ''}
           </tr>
-        `).join('') : `<tr><td colspan="5" style="text-align:center; color:#666;">No employees found.</td></tr>`}
+        `).join('') : `<tr><td colspan="5" style="text-align:center; color:#666;">No evaluable users found.</td></tr>`}
       </tbody>
     </table>
   `;
@@ -587,7 +602,7 @@ function updateEvalTotal() {
     let att = parseFloat(document.getElementById('eval-attendance').value) || 0;
     let beh = parseFloat(document.getElementById('eval-behaviour').value) || 0;
     
-    // Restrict max bounds
+    // Restrict max bounds based on grading rubric
     if(goals > 15) { goals = 15; document.getElementById('eval-goals').value = 15; }
     if(att > 10) { att = 10; document.getElementById('eval-attendance').value = 10; }
     if(beh > 10) { beh = 10; document.getElementById('eval-behaviour').value = 10; }
@@ -619,7 +634,7 @@ async function saveEvaluation() {
     };
 
     const { error } = await supabaseClient.from('evaluations').insert([newEval]);
-    if(error){ alert('DATABASE ERROR: ' + error.message + '\nDid you run the SQL command to create the evaluations table?'); } 
+    if(error){ alert('DATABASE ERROR: ' + error.message); } 
     else { 
         showToast('Evaluation Saved!'); 
         closeEvalModal();
@@ -667,6 +682,7 @@ function renderDeptTasks(el, code, viewRole){
   if (viewRole === 'employee') { list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); }
   if (taskFilter !== 'All') list = list.filter(t=>t.status===taskFilter);
 
+  // Both Admin and HOD can assign tasks to ANYONE in this department (HOD or Employee)
   let deptUsers = USERS.filter(u => u.department === code);
   let assignOptions = `<option value="">-- Unassigned --</option>` + deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
 
@@ -674,7 +690,7 @@ function renderDeptTasks(el, code, viewRole){
   if(viewRole === 'admin' || viewRole === 'hod') {
       addTaskHtml = `
       <div class="add-task-box">
-        <h4 style="margin:0 0 10px; color:var(--emerald-900); font-family:'Inter'; font-weight:700;">Add a New Task</h4>
+        <h4 style="margin:0 0 10px; color:var(--emerald-900); font-family:'Inter'; font-weight:700;">Assign a New Task</h4>
         <div class="row">
           <input type="text" id="new-task-text" placeholder="Task description..." style="flex: 1 1 100%;">
         </div>
@@ -722,7 +738,7 @@ function renderDeptTasks(el, code, viewRole){
           assigned_to: assigned_to_name,
           mobile: auto_mobile,
           priority: document.getElementById('new-task-priority').value,
-          score: 0, // Removed individual scores since we use 100-pt KPI now
+          score: 0, 
           start_date: document.getElementById('new-task-start').value || null,
           due_date: document.getElementById('new-task-due').value || null,
           end_date: document.getElementById('new-task-end').value || null,
