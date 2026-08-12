@@ -301,10 +301,10 @@
 
 <script>
 // ==========================================
-// SUPABASE CREDENTIALS 
+// SUPABASE CREDENTIALS (NEW PROJECT)
 // ==========================================
-const SUPABASE_URL = "https://zgaprxfnzzkoqyjdyysn.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpnYXByeGZuenprb3F5amR5eXNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5MTc2MjQsImV4cCI6MjEwMTQ5MzYyNH0.-LPM2g8jYgVlcgY0uSK1EcZ8LBFsYrZqpez_JML26MQ";
+const SUPABASE_URL = "https://tomufxlnomhtyqkhsoen.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRvbXVmeGxub21odHlxa2hzb2VuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1MjEzMTYsImV4cCI6MjEwMjA5NzMxNn0.SdVdEbwhohm5WK650e9Duhq9W1WA7hb7UekdHDIe2yo";
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let DEPARTMENTS = [];
@@ -330,7 +330,6 @@ async function loadData(){
     const { data: tData } = await supabaseClient.from('tasks').select('*');
     TASKS = tData || [];
     
-    // Load evaluations table safely
     const { data: eData } = await supabaseClient.from('evaluations').select('*');
     EVALUATIONS = eData || [];
 
