@@ -130,6 +130,8 @@
   .badge-low { background:#f1f5f9; color:#475569; }
   .badge-medium { background:var(--gold-100); color:var(--gold-600); }
   .badge-high { background:var(--clay-100); color:var(--clay-600); }
+
+  .badge-frequency { background:#f8fafc; color:#475569; padding:3px 8px; border-radius:12px; font-weight:700; text-transform:uppercase; font-size:10px; border: 1px solid #cbd5e1; }
   
   .badge-date { background:#e0e7ff; color:#4338ca; padding:3px 8px; border-radius:12px; font-weight:600; font-size:10px; border:1px solid #c7d2fe;}
   .badge-overdue { background:#fee2e2; color:#b91c1c; padding:3px 8px; border-radius:12px; font-weight:700; font-size:10px; border:1px solid #fecaca;}
@@ -301,7 +303,7 @@
 
 <script>
 // ==========================================
-// SUPABASE CREDENTIALS (NEW PROJECT)
+// SUPABASE CREDENTIALS
 // ==========================================
 const SUPABASE_URL = "https://tomufxlnomhtyqkhsoen.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRvbXVmeGxub21odHlxa2hzb2VuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1MjEzMTYsImV4cCI6MjEwMjA5NzMxNn0.SdVdEbwhohm5WK650e9Duhq9W1WA7hb7UekdHDIe2yo";
@@ -486,33 +488,28 @@ function deptStats(code){
 /* ---------------- 100-POINT SCOREBOARD ---------------- */
 function renderScoreboard(el){
   
-  // 1. Group latest evaluation scores by Employee/HOD
   let latestEvals = {};
   EVALUATIONS.forEach(e => {
-    // Basic sorting to get the latest per person
     if(!latestEvals[e.employee_name] || e.created_at > latestEvals[e.employee_name].created_at) {
         latestEvals[e.employee_name] = e;
     }
   });
 
-  // 2. Build User Rows (Now includes BOTH HODs and Employees)
   let evalUsers = USERS.filter(u => u.role === 'employee' || u.role === 'hod');
   
   let empRows = evalUsers.map(u => {
     let evalData = latestEvals[u.name];
     let totalScore = evalData ? parseFloat(evalData.total_score) : 0;
     
-    // Calculate raw task stats just for visibility
     let myTasks = TASKS.filter(t => t.assigned_to === u.name);
     let completed = myTasks.filter(t => t.status === 'Done').length;
     let total = myTasks.length;
     
-    // Hierarchy Check: Can the current person click the Evaluate button?
     let canEvaluate = false;
     if (currentUser.role === 'admin') {
-        canEvaluate = true; // Superadmin can evaluate anyone
+        canEvaluate = true; 
     } else if (currentUser.role === 'hod' && u.role === 'employee' && u.department === currentUser.department) {
-        canEvaluate = true; // HOD can only evaluate employees in their own department
+        canEvaluate = true; 
     }
 
     return { 
@@ -526,7 +523,6 @@ function renderScoreboard(el){
     };
   });
   
-  // Sort by KPI Score (Highest first)
   empRows.sort((a,b) => b.kpiScore - a.kpiScore);
 
   let coachTitle = "100-Point HR Scorecard";
@@ -568,20 +564,17 @@ function openEvalModal(empName) {
     currentEvalEmp = empName;
     document.getElementById('eval-emp-name').innerText = `Evaluate: ${empName}`;
     
-    // Auto-calculate Area 1 (Delegated Tasks - 30%)
     let delTasks = TASKS.filter(t => t.assigned_to === empName && t.category === 'Delegated Task');
     let delDone = delTasks.filter(t => t.status === 'Done').length;
-    let delScore = delTasks.length > 0 ? (delDone / delTasks.length) * 30 : 30; // Default full points if no tasks
+    let delScore = delTasks.length > 0 ? (delDone / delTasks.length) * 30 : 30; 
     
-    // Auto-calculate Area 2 (Check List - 35%)
     let kpiTasks = TASKS.filter(t => t.assigned_to === empName && (t.category === 'Check List' || t.category === 'Daily Task'));
     let kpiDone = kpiTasks.filter(t => t.status === 'Done').length;
-    let kpiScore = kpiTasks.length > 0 ? (kpiDone / kpiTasks.length) * 35 : 35; // Default full points if no tasks
+    let kpiScore = kpiTasks.length > 0 ? (kpiDone / kpiTasks.length) * 35 : 35; 
 
     document.getElementById('eval-delegated').innerText = Math.round(delScore);
     document.getElementById('eval-kpi').innerText = Math.round(kpiScore);
     
-    // Reset manual inputs
     document.getElementById('eval-goals').value = 0;
     document.getElementById('eval-attendance').value = 0;
     document.getElementById('eval-behaviour').value = 0;
@@ -602,7 +595,6 @@ function updateEvalTotal() {
     let att = parseFloat(document.getElementById('eval-attendance').value) || 0;
     let beh = parseFloat(document.getElementById('eval-behaviour').value) || 0;
     
-    // Restrict max bounds based on grading rubric
     if(goals > 15) { goals = 15; document.getElementById('eval-goals').value = 15; }
     if(att > 10) { att = 10; document.getElementById('eval-attendance').value = 10; }
     if(beh > 10) { beh = 10; document.getElementById('eval-behaviour').value = 10; }
@@ -682,7 +674,6 @@ function renderDeptTasks(el, code, viewRole){
   if (viewRole === 'employee') { list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); }
   if (taskFilter !== 'All') list = list.filter(t=>t.status===taskFilter);
 
-  // Both Admin and HOD can assign tasks to ANYONE in this department (HOD or Employee)
   let deptUsers = USERS.filter(u => u.department === code);
   let assignOptions = `<option value="">-- Unassigned --</option>` + deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
 
@@ -697,6 +688,13 @@ function renderDeptTasks(el, code, viewRole){
         <div class="row">
           <div><label>Category (For KPI Score)</label><select id="new-task-category"><option value="Check List">Check List (Area 2 KPI)</option><option value="Delegated Task" selected>Delegated Task (Area 1 KPI)</option></select></div>
           <div><label>Assign To</label><select id="new-task-assign">${assignOptions}</select></div>
+          <div><label>Frequency</label><select id="new-task-frequency">
+            <option value="One-Time" selected>One-Time</option>
+            <option value="Daily">Daily</option>
+            <option value="Weekly">Weekly</option>
+            <option value="Twice a Month">Twice a Month</option>
+            <option value="Monthly">Monthly</option>
+          </select></div>
           <div><label>Priority</label><select id="new-task-priority"><option value="Low">Low</option><option value="Medium" selected>Medium</option><option value="High">High</option></select></div>
         </div>
         <div class="row">
@@ -736,6 +734,7 @@ function renderDeptTasks(el, code, viewRole){
           text: txt,
           category: document.getElementById('new-task-category').value,
           assigned_to: assigned_to_name,
+          frequency: document.getElementById('new-task-frequency').value,
           mobile: auto_mobile,
           priority: document.getElementById('new-task-priority').value,
           score: 0, 
@@ -786,6 +785,7 @@ function taskRowHtml(t, viewRole){
       <div class="n">${escapeHtml(t.text)}</div>
       <div class="meta" style="margin-bottom:8px;">
         <span class="badge-category ${catClass}">${cat}</span>
+        ${t.frequency && t.frequency !== 'One-Time' ? `<span class="badge-frequency">🔁 ${t.frequency}</span>` : ''}
         <span class="badge-priority ${priClass}">${t.priority || 'Medium'}</span>
         ${t.due_date ? `<span class="${dueBadgeClass}">${dueText}</span>` : ''}
       </div>
