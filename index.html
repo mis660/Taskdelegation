@@ -330,7 +330,7 @@ async function loadData(){
     const { data: tData } = await supabaseClient.from('tasks').select('*');
     TASKS = tData || [];
     
-    // NEW: Load evaluations table
+    // Load evaluations table safely
     const { data: eData } = await supabaseClient.from('evaluations').select('*');
     EVALUATIONS = eData || [];
 
@@ -462,7 +462,7 @@ function renderContent(){
   if(activeTab === 'mytasks') return renderDeptTasks(el, currentUser.department, 'employee');
 }
 
-/* ---------------- GEM METER SVG ---------------- */
+/* ---------------- GEM METER & HELPER FUNCTIONS ---------------- */
 function gemSvg(pct){
   const clr = pct >= 70 ? 'var(--emerald-600)' : pct >= 35 ? 'var(--gold-500)' : 'var(--clay-600)';
   const h = Math.max(4, pct);
@@ -473,8 +473,16 @@ function gemSvg(pct){
     <polygon points="22,2 40,13 40,31 22,42 4,31 4,13" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="0.6"/>
   </svg>`;
 }
+
+function pctClass(p){ return p>=70?'pct-high':(p>=35?'pct-mid':'pct-low'); }
 function barColor(p){ return p>=70?'var(--emerald-600)':(p>=35?'var(--gold-500)':'var(--clay-600)'); }
 
+function deptStats(code){
+  const list = TASKS.filter(t=>t.department===code);
+  const done = list.filter(t=>t.status==='Done').length;
+  const pct = list.length ? Math.round((done/list.length)*100) : 0;
+  return {total:list.length, done, pct};
+}
 
 /* ---------------- 100-POINT SCOREBOARD ---------------- */
 function renderScoreboard(el){
