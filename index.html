@@ -738,9 +738,10 @@ function renderDeptTasks(el, code, viewRole){
           frequency: document.getElementById('new-task-frequency').value,
           mobile: auto_mobile,
           priority: document.getElementById('new-task-priority').value,
-          score: 0, // Manual assignment score hidden; automated in DB schema
+          score: 0, 
           start_date: document.getElementById('new-task-start').value || null,
           due_date: document.getElementById('new-task-due').value || null,
+          end_date: null, // Always defaults to null on creation
           status: 'Pending',
           notes: '',
           updated_by: currentUser.name,
@@ -768,23 +769,28 @@ function taskRowHtml(t, viewRole){
   if (cat === 'Daily Task') cat = 'Check List'; 
   const catClass = cat === 'Check List' ? 'badge-checklist' : 'badge-delegated';
 
-  // Smart Delay & Overdue Logic against Today's Date
+  // Smart Delay & Overdue Logic against Today's Date or End Date
   const todayStr = new Date().toISOString().split('T')[0];
   let delayBadge = '';
   let dueText = t.due_date ? `Due: ${t.due_date}` : '';
   let dueBadgeClass = 'badge-date';
 
-  if (t.due_date && t.status !== 'Done') {
+  if (t.due_date) {
+      let compareDateStr = (t.status === 'Done' && t.end_date) ? t.end_date : todayStr;
       let dDue = new Date(t.due_date);
-      let dToday = new Date(todayStr);
+      let dComp = new Date(compareDateStr);
       dDue.setHours(0,0,0,0);
-      dToday.setHours(0,0,0,0);
+      dComp.setHours(0,0,0,0);
       
-      let diffDays = Math.floor((dToday - dDue) / (1000 * 60 * 60 * 24));
+      let diffDays = Math.floor((dComp - dDue) / (1000 * 60 * 60 * 24));
       
       if (diffDays > 0) {
           dueBadgeClass = 'badge-overdue';
-          delayBadge = `<span class="badge-overdue" style="margin-left:6px;">Overdue by ${diffDays} day(s)</span>`;
+          if (t.status === 'Done' && t.end_date) {
+              delayBadge = `<span class="badge-overdue" style="margin-left:6px;">Delayed by ${diffDays} day(s)</span>`;
+          } else if (t.status !== 'Done') {
+              delayBadge = `<span class="badge-overdue" style="margin-left:6px;">Overdue by ${diffDays} day(s)</span>`;
+          }
       }
   }
 
@@ -807,6 +813,7 @@ function taskRowHtml(t, viewRole){
       <div class="meta">
         ${t.assigned_to ? `<span class="assigned-badge">${escapeHtml(t.assigned_to)}</span>` : ''}
         ${t.start_date ? `<span>Start: ${t.start_date}</span>` : ''}
+        ${t.end_date ? `<span>End: ${t.end_date}</span>` : ''}
         ${t.updated_at ? `<span>(Updated by ${escapeHtml(t.updated_by||'-')})</span>` : ''}
       </div>
     </div>
@@ -837,9 +844,18 @@ function wireTaskRowEvents(el, code, viewRole){
       const newStatus = select.value;
       const newNotes = row.querySelector('[data-role="notes"]').value;
       
+      // Auto-assign End Date when marked as Done (and clear it if unmarked)
+      let newEndDate = task.end_date;
+      if (newStatus === 'Done' && task.status !== 'Done') {
+          newEndDate = new Date().toISOString().split('T')[0];
+      } else if (newStatus !== 'Done') {
+          newEndDate = null;
+      }
+      
       const { error } = await supabaseClient.from('tasks').update({ 
          status: newStatus, 
          notes: newNotes, 
+         end_date: newEndDate,
          updated_by: currentUser.name, 
          updated_at: new Date().toISOString() 
       }).eq('id', id);
@@ -848,6 +864,7 @@ function wireTaskRowEvents(el, code, viewRole){
       else {
         task.status = newStatus; 
         task.notes = newNotes; 
+        task.end_date = newEndDate;
         task.updated_by = currentUser.name;
         showToast('Task updated!');
         checkDueTasksQueue(); 
