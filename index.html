@@ -268,7 +268,7 @@
 
     <div class="eval-row">
       <div class="eval-info">
-        <h4>3. Dept Goal Contribution</h4>
+        <h4>3. Company / Department Goal Contribution</h4>
         <p>Manager Review (15%)</p>
       </div>
       <div class="eval-input"><input type="number" id="eval-goals" min="0" max="15" value="0" oninput="updateEvalTotal()"> / 15</div>
@@ -276,7 +276,7 @@
 
     <div class="eval-row">
       <div class="eval-info">
-        <h4>4. Attendance & Hygiene</h4>
+        <h4>4. Attendance & Hygiene Factors</h4>
         <p>Manager Review (10%)</p>
       </div>
       <div class="eval-input"><input type="number" id="eval-attendance" min="0" max="10" value="0" oninput="updateEvalTotal()"> / 10</div>
@@ -727,7 +727,9 @@ function renderDeptTasks(el, code, viewRole){
         
         const assigned_to_name = document.getElementById('new-task-assign').value;
         const assigned_user = USERS.find(u => u.name === assigned_to_name);
-        const auto_mobile = assigned_user ? assigned_user.mobile : null;
+        
+        // Auto-fetch mobile number from Admin Control profile creation
+        const auto_mobile = assigned_user ? assigned_user.mobile : null; 
         
         const newTask = {
           department: code,
@@ -737,7 +739,7 @@ function renderDeptTasks(el, code, viewRole){
           frequency: document.getElementById('new-task-frequency').value,
           mobile: auto_mobile,
           priority: document.getElementById('new-task-priority').value,
-          score: 0, 
+          score: 0, // Manual assignment score hidden; automated in DB schema
           start_date: document.getElementById('new-task-start').value || null,
           due_date: document.getElementById('new-task-due').value || null,
           end_date: document.getElementById('new-task-end').value || null,
@@ -768,10 +770,30 @@ function taskRowHtml(t, viewRole){
   if (cat === 'Daily Task') cat = 'Check List'; 
   const catClass = cat === 'Check List' ? 'badge-checklist' : 'badge-delegated';
 
-  const today = new Date().toISOString().split('T')[0];
-  const isOverdue = t.due_date && t.due_date <= today && t.status !== 'Done';
-  const dueBadgeClass = isOverdue ? 'badge-overdue' : 'badge-date';
-  const dueText = isOverdue ? `Overdue: ${t.due_date}` : `Due: ${t.due_date}`;
+  // Smart Delay & Overdue Logic
+  const todayStr = new Date().toISOString().split('T')[0];
+  let delayBadge = '';
+  let dueText = t.due_date ? `Due: ${t.due_date}` : '';
+  let dueBadgeClass = 'badge-date';
+
+  if (t.due_date) {
+      let compareDateStr = t.end_date ? t.end_date : todayStr;
+      let dDue = new Date(t.due_date);
+      let dComp = new Date(compareDateStr);
+      dDue.setHours(0,0,0,0);
+      dComp.setHours(0,0,0,0);
+      
+      let diffDays = Math.floor((dComp - dDue) / (1000 * 60 * 60 * 24));
+      
+      if (diffDays > 0) {
+          dueBadgeClass = 'badge-overdue';
+          if (t.end_date) {
+              delayBadge = `<span class="badge-overdue" style="margin-left:6px;">Delayed by ${diffDays} day(s)</span>`;
+          } else if (t.status !== 'Done') {
+              delayBadge = `<span class="badge-overdue" style="margin-left:6px;">Overdue by ${diffDays} day(s)</span>`;
+          }
+      }
+  }
 
   const waText = encodeURIComponent(`Hello ${t.assigned_to || 'Team'}, reminder for your task:\n\n*${t.text}*\nPriority: ${t.priority || 'Medium'}\nDue Date: ${t.due_date || 'ASAP'}`);
   const mobileStr = t.mobile ? String(t.mobile).replace(/\D/g,'') : '';
@@ -787,7 +809,7 @@ function taskRowHtml(t, viewRole){
         <span class="badge-category ${catClass}">${cat}</span>
         ${t.frequency && t.frequency !== 'One-Time' ? `<span class="badge-frequency">🔁 ${t.frequency}</span>` : ''}
         <span class="badge-priority ${priClass}">${t.priority || 'Medium'}</span>
-        ${t.due_date ? `<span class="${dueBadgeClass}">${dueText}</span>` : ''}
+        ${t.due_date ? `<span class="${dueBadgeClass}">${dueText}</span>${delayBadge}` : ''}
       </div>
       <div class="meta">
         ${t.assigned_to ? `<span class="assigned-badge">${escapeHtml(t.assigned_to)}</span>` : ''}
@@ -823,11 +845,26 @@ function wireTaskRowEvents(el, code, viewRole){
       const newStatus = select.value;
       const newNotes = row.querySelector('[data-role="notes"]').value;
       
-      const { error } = await supabaseClient.from('tasks').update({ status: newStatus, notes: newNotes, updated_by: currentUser.name, updated_at: new Date().toISOString() }).eq('id', id);
+      // Auto-populate End Date if it is marked as Done and currently empty
+      let newEndDate = task.end_date;
+      if (newStatus === 'Done' && task.status !== 'Done' && !task.end_date) {
+         newEndDate = new Date().toISOString().split('T')[0];
+      }
+      
+      const { error } = await supabaseClient.from('tasks').update({ 
+         status: newStatus, 
+         notes: newNotes, 
+         end_date: newEndDate,
+         updated_by: currentUser.name, 
+         updated_at: new Date().toISOString() 
+      }).eq('id', id);
 
       if(error){ alert('DATABASE ERROR updating task: ' + error.message); } 
       else {
-        task.status = newStatus; task.notes = newNotes; task.updated_by = currentUser.name;
+        task.status = newStatus; 
+        task.notes = newNotes; 
+        task.end_date = newEndDate;
+        task.updated_by = currentUser.name;
         showToast('Task updated!');
         checkDueTasksQueue(); 
         renderDeptTasks(document.getElementById('content'), code, viewRole);
