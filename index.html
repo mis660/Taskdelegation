@@ -499,7 +499,20 @@ function renderScoreboard(el){
     }
   });
 
-  let evalUsers = USERS.filter(u => u.role === 'employee' || u.role === 'hod');
+  // RESTRICT HOD SCOREBOARD TO THEIR DEPARTMENT ONLY
+  let evalUsers = [];
+  if (currentUser.role === 'admin') {
+      evalUsers = USERS.filter(u => u.role === 'employee' || u.role === 'hod');
+  } else if (currentUser.role === 'hod') {
+      const myDept = currentUser.department ? currentUser.department.toLowerCase().replace(/\s+/g, '') : '';
+      evalUsers = USERS.filter(u => {
+          if (u.role !== 'employee' && u.role !== 'hod') return false;
+          const uDept = u.department ? u.department.toLowerCase().replace(/\s+/g, '') : '';
+          return uDept === myDept;
+      });
+  } else {
+      evalUsers = USERS.filter(u => u.name === currentUser.name);
+  }
   
   let empRows = evalUsers.map(u => {
     let evalData = latestEvals[u.name];
@@ -530,14 +543,16 @@ function renderScoreboard(el){
   empRows.sort((a,b) => b.kpiScore - a.kpiScore);
 
   let coachTitle = "100-Point HR Scorecard";
-  let coachMsg = "Track comprehensive monthly performance across all roles. Super Admin evaluates HODs, and HODs evaluate their team members.";
+  let coachMsg = currentUser.role === 'admin' 
+      ? "Track comprehensive monthly performance across all roles." 
+      : "Track monthly performance for your department employees.";
 
   el.innerHTML = `
-    <div class="section-head"><div><h2>Performance Scoreboard</h2><div class="desc">100-Point Monthly KPI Evaluations (Employees & HODs)</div></div></div>
+    <div class="section-head"><div><h2>Performance Scoreboard</h2><div class="desc">100-Point Monthly KPI Evaluations</div></div></div>
     
     <div class="coach-banner"><div style="font-size:32px;">💡</div><div><h3>${coachTitle}</h3><p>${coachMsg}</p></div></div>
 
-    <h3 style="color:var(--emerald-900); margin-bottom:12px; font-size:18px;">👤 Company Rankings</h3>
+    <h3 style="color:var(--emerald-900); margin-bottom:12px; font-size:18px;">👤 Rankings</h3>
     <table class="users-table">
       <thead><tr><th>Rank & Name</th><th>Role / Dept</th><th>Task Volume</th><th>Overall KPI Score (Out of 100)</th>${currentUser.role !== 'employee' ? '<th>Action</th>' : ''}</tr></thead>
       <tbody>
@@ -689,16 +704,14 @@ function renderDeptTasks(el, code, viewRole){
     return uDept === cDept || u.department === currentDept.name;
   });
 
-  // Setup main dropdown for new tasks
-  let assignOptions = `<option value="">-- Unassigned --</option>` 
-                    + `<option value="DISTRIBUTE_ALL" style="font-weight:bold; color:var(--emerald-700);">➔ Distribute to ALL in Dept</option>`;
-
-  if (currentUser.role === 'admin' || currentUser.role === 'hod') {
-      assignOptions += deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
-  }
-
+  // HIDE "ADD TASK" BOX FOR EVERYONE EXCEPT ADMINS
   let addTaskHtml = '';
-  if(viewRole === 'admin' || viewRole === 'hod') {
+  if(viewRole === 'admin') {
+      
+      let assignOptions = `<option value="">-- Unassigned --</option>` 
+                        + `<option value="DISTRIBUTE_ALL" style="font-weight:bold; color:var(--emerald-700);">➔ Distribute to ALL in Dept</option>`
+                        + deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
+
       addTaskHtml = `
       <div class="add-task-box">
         <h4 style="margin:0 0 10px; color:var(--emerald-900); font-family:'Inter'; font-weight:700;">Assign a New Task</h4>
@@ -834,12 +847,13 @@ function taskRowHtml(t, viewRole, deptUsers = []){
   const deleteBtnStyle = viewRole === 'employee' ? 'style="display:none;"' : '';
   const waBtnStyle = (t.mobile && viewRole !== 'employee') ? `<a href="${waLink}" target="_blank" class="btn btn-whatsapp btn-sm" title="Send Reminder">📱 Remind</a>` : '';
 
-  // Employee only sees read-only badge. Admins/HODs see assignment dropdown
+  // Employee only sees read-only badge. Admins/HODs see the assignment dropdown right on the row
   const employeeAssignedBadge = (viewRole === 'employee' && t.assigned_to) ? `<span class="assigned-badge">${escapeHtml(t.assigned_to)}</span>` : '';
 
   const delegationDropdown = (viewRole !== 'employee') ? `
     <select class="assign-select" data-role="assign">
       <option value="">-- Unassigned --</option>
+      <option value="DISTRIBUTE_ALL" style="font-weight:bold; color:var(--emerald-700);">➔ Distribute to ALL in Dept</option>
       ${deptUsers.map(u => `<option value="${escapeAttr(u.name)}" ${t.assigned_to === u.name ? 'selected' : ''}>👤 ${escapeHtml(u.name)}</option>`).join('')}
     </select>
   ` : '';
@@ -888,27 +902,78 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers){
       const newStatus = select.value;
       const newNotes = row.querySelector('[data-role="notes"]').value;
       
-      // Look for the assignment dropdown (only exists for HODs and Admins)
-      const assignSelect = row.querySelector('[data-role="assign"]');
-      let newAssignedTo = task.assigned_to;
-      let newMobile = task.mobile;
-
-      if (assignSelect) {
-          newAssignedTo = assignSelect.value;
-          if (newAssignedTo) {
-              const assignedUser = USERS.find(u => u.name === newAssignedTo);
-              newMobile = assignedUser ? assignedUser.mobile : null;
-          } else {
-              newAssignedTo = null;
-              newMobile = null;
-          }
-      }
-      
       let newEndDate = task.end_date;
       if (newStatus === 'Done' && task.status !== 'Done') {
           newEndDate = new Date().toISOString().split('T')[0];
       } else if (newStatus !== 'Done') {
           newEndDate = null;
+      }
+      
+      // Inline Assignment Logic for HODs and Admins
+      const assignSelect = row.querySelector('[data-role="assign"]');
+      let newAssignedTo = task.assigned_to;
+      let newMobile = task.mobile;
+
+      if (assignSelect) {
+          // If HOD decides to distribute this specific existing task to everyone in the department inline
+          if (assignSelect.value === 'DISTRIBUTE_ALL') {
+              if (deptUsers.length === 0) { showToast('No users available'); return; }
+              if (!confirm('This will create a copy of this task for every employee in the department. Continue?')) {
+                  assignSelect.value = task.assigned_to || ''; // reset if cancelled
+                  return;
+              }
+              
+              let firstUser = deptUsers[0]; // Assign original task to the first user
+              let clonedTasks = [];
+              
+              // Prepare clones for everyone else
+              for(let i = 1; i < deptUsers.length; i++){
+                  clonedTasks.push({
+                      department: task.department,
+                      text: task.text,
+                      category: task.category,
+                      frequency: task.frequency,
+                      priority: task.priority,
+                      score: 0,
+                      start_date: task.start_date,
+                      due_date: task.due_date,
+                      end_date: newEndDate,
+                      status: newStatus,
+                      notes: newNotes,
+                      assigned_to: deptUsers[i].name,
+                      mobile: deptUsers[i].mobile || null,
+                      updated_by: currentUser.name,
+                      updated_at: new Date().toISOString()
+                  });
+              }
+              
+              // 1. Update the original row for the first user
+              await supabaseClient.from('tasks').update({ 
+                   status: newStatus, notes: newNotes, end_date: newEndDate, assigned_to: firstUser.name, mobile: firstUser.mobile || null, updated_by: currentUser.name, updated_at: new Date().toISOString() 
+              }).eq('id', id);
+              
+              // 2. Insert the clones for everyone else
+              if (clonedTasks.length > 0) {
+                  const { data } = await supabaseClient.from('tasks').insert(clonedTasks).select();
+                  if(data) data.forEach(d => TASKS.push(d));
+              }
+              
+              task.status = newStatus; task.notes = newNotes; task.end_date = newEndDate; task.assigned_to = firstUser.name; task.mobile = firstUser.mobile;
+              showToast('Distributed to ALL employees!');
+              renderDeptTasks(document.getElementById('content'), code, viewRole);
+              return; // Stop here since we've handled the distribution
+          } 
+          // Standard specific employee assignment
+          else {
+              newAssignedTo = assignSelect.value;
+              if (newAssignedTo) {
+                  const assignedUser = USERS.find(u => u.name === newAssignedTo);
+                  newMobile = assignedUser ? assignedUser.mobile : null;
+              } else {
+                  newAssignedTo = null;
+                  newMobile = null;
+              }
+          }
       }
       
       const { error } = await supabaseClient.from('tasks').update({ 
