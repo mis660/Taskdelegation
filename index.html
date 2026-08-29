@@ -668,14 +668,28 @@ function renderAllTasksList(el){
 
 /* ---------------- DEPARTMENT TASK LIST (Smart Views) ---------------- */
 function renderDeptTasks(el, code, viewRole){
-  const name = deptName(code);
-  let list = TASKS.filter(t=>t.department===code);
+  // 1. Robust matching for database
+  const currentDept = DEPARTMENTS.find(d => d.code === code || d.name === code) || { name: code, code: code };
+  const safeCode = currentDept.code;
+  const deptDisplayName = currentDept.name;
+
+  let list = TASKS.filter(t => t.department === safeCode || t.department === currentDept.name);
   
   if (viewRole === 'employee') { list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); }
   if (taskFilter !== 'All') list = list.filter(t=>t.status===taskFilter);
 
-  let deptUsers = USERS.filter(u => u.department && u.department.toLowerCase().replace(/\s+/g, '') === code);
-  let assignOptions = `<option value="">-- Unassigned --</option>` + deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
+  // 2. Format names correctly to match user table
+  let deptUsers = USERS.filter(u => {
+    if (!u.department) return false;
+    const uDept = u.department.toLowerCase().replace(/\s+/g, '');
+    const cDept = safeCode.toLowerCase().replace(/\s+/g, '');
+    return uDept === cDept || u.department === currentDept.name;
+  });
+
+  // 3. Setup dropdown (Allows BOTH Admins and HODs to manually assign AND distribute all)
+  let assignOptions = `<option value="">-- Unassigned --</option>` 
+                    + `<option value="DISTRIBUTE_ALL" style="font-weight:bold; color:var(--emerald-700);">➔ Distribute to ALL in Dept</option>`
+                    + deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
 
   let addTaskHtml = '';
   if(viewRole === 'admin' || viewRole === 'hod') {
@@ -707,7 +721,7 @@ function renderDeptTasks(el, code, viewRole){
 
   el.innerHTML = `
     ${viewRole === 'admin' ? `<div class="back-link" id="back-to-all">← Back to all departments</div>` : ''}
-    <div class="section-head"><div><h2>${viewRole === 'employee' ? 'My Assigned Tasks' : name}</h2><div class="desc">${list.length} tasks on file</div></div></div>
+    <div class="section-head"><div><h2>${viewRole === 'employee' ? 'My Assigned Tasks' : deptDisplayName}</h2><div class="desc">${list.length} tasks on file</div></div></div>
     <div class="filter-row">${['All','Pending','In Progress','Done'].map(f=>`<div class="chip ${taskFilter===f?'active':''}" data-f="${f}">${f}</div>`).join('')}</div>
     
     <div id="task-list">${list.length ? list.map(t=>taskRowHtml(t, viewRole)).join('') : '<div class="empty-note">No tasks match this filter.</div>'}</div>
@@ -716,46 +730,64 @@ function renderDeptTasks(el, code, viewRole){
   `;
 
   if(viewRole === 'admin'){ document.getElementById('back-to-all').addEventListener('click', ()=>{ activeDeptCode = null; taskFilter='All'; renderContent(); }); }
-  el.querySelectorAll('.chip').forEach(c=>{ c.addEventListener('click', ()=>{ taskFilter = c.dataset.f; renderDeptTasks(el, code, viewRole); }); });
-  wireTaskRowEvents(el, code, viewRole);
+  el.querySelectorAll('.chip').forEach(c=>{ c.addEventListener('click', ()=>{ taskFilter = c.dataset.f; renderDeptTasks(el, safeCode, viewRole); }); });
+  wireTaskRowEvents(el, safeCode, viewRole);
 
   if(document.getElementById('add-task-btn')){
       document.getElementById('add-task-btn').addEventListener('click', async ()=>{
         const txt = document.getElementById('new-task-text').value.trim();
         if(!txt){ showToast('Type a task description first'); return; }
         
-        const assigned_to_name = document.getElementById('new-task-assign').value;
-        const assigned_user = USERS.find(u => u.name === assigned_to_name);
+        const assigned_val = document.getElementById('new-task-assign').value;
         
-        // Auto-fetch mobile number from Admin Control profile creation
-        const auto_mobile = assigned_user ? assigned_user.mobile : null; 
-        
-        const newTask = {
-          department: code,
+        // Base task properties
+        const baseTask = {
+          department: safeCode,
           text: txt,
           category: document.getElementById('new-task-category').value,
-          assigned_to: assigned_to_name,
           frequency: document.getElementById('new-task-frequency').value,
-          mobile: auto_mobile,
           priority: document.getElementById('new-task-priority').value,
           score: 0, 
           start_date: document.getElementById('new-task-start').value || null,
           due_date: document.getElementById('new-task-due').value || null,
-          end_date: null, // Always defaults to null on creation
+          end_date: null,
           status: 'Pending',
           notes: '',
           updated_by: currentUser.name,
           updated_at: new Date().toISOString()
         };
 
-        const { data, error } = await supabaseClient.from('tasks').insert([newTask]).select();
+        let tasksToInsert = [];
+
+        // 4. Distribution Logic: Assign to ALL vs Single User
+        if (assigned_val === 'DISTRIBUTE_ALL') {
+            if(deptUsers.length === 0) { showToast('No users available in this department'); return; }
+            
+            deptUsers.forEach(u => {
+                tasksToInsert.push({
+                    ...baseTask,
+                    assigned_to: u.name,
+                    mobile: u.mobile || null
+                });
+            });
+        } else {
+            const assigned_user = USERS.find(u => u.name === assigned_val);
+            tasksToInsert.push({
+                ...baseTask,
+                assigned_to: assigned_val,
+                mobile: assigned_user ? assigned_user.mobile : null
+            });
+        }
+
+        // Bulk insert to Supabase
+        const { data, error } = await supabaseClient.from('tasks').insert(tasksToInsert).select();
         
         if(error){ alert("DATABASE ERROR: " + error.message); } 
         else {
-          if(data && data[0]) TASKS.push(data[0]);
-          showToast('Task added successfully!');
+          if(data) data.forEach(d => TASKS.push(d));
+          showToast(tasksToInsert.length > 1 ? `Checklist distributed to ${tasksToInsert.length} employees!` : 'Task added successfully!');
           checkDueTasksQueue(); 
-          renderDeptTasks(el, code, viewRole);
+          renderDeptTasks(el, safeCode, viewRole);
         }
       });
   }
