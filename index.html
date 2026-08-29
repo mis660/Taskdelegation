@@ -1108,3 +1108,43 @@ window.deleteDept = async function(id) {
 </script>
 </body>
 </html>
+
+/* ---------------- 6 PM AUTOMATED DAILY TASK QUEUE ---------------- */
+function check6PMRoutine() {
+  // Only run this for users who have permission to send reminders
+  if (!currentUser || currentUser.role === 'employee') return;
+
+  const now = new Date();
+  
+  // Check if it is exactly 18:00 (6:00 PM)
+  if (now.getHours() === 18 && now.getMinutes() === 0) {
+      
+      // Prevent running multiple times within the same minute
+      if (window._hasRun6PM) return;
+      window._hasRun6PM = true;
+      setTimeout(() => { window._hasRun6PM = false; }, 65000);
+
+      // Find all Daily Tasks / Check Lists that are NOT Done and have a mobile number
+      const pendingDaily = TASKS.filter(t => 
+        (t.category === 'Daily Task' || t.category === 'Check List') && 
+        t.status !== 'Done' && 
+        t.mobile
+      );
+
+      if (pendingDaily.length > 0) {
+          // Push them to the smart reminder queue
+          autoRemindQueue = pendingDaily;
+          
+          const btn = document.getElementById('smart-remind-btn');
+          const countSpan = document.getElementById('remind-count');
+          btn.style.display = 'inline-flex';
+          countSpan.innerText = autoRemindQueue.length;
+          btn.className = 'btn btn-whatsapp-alert btn-sm';
+          
+          showToast(`🔔 6 PM Alert: ${pendingDaily.length} Daily Tasks remain pending!`);
+      }
+  }
+}
+
+// Run the clock checker every 30 seconds
+setInterval(check6PMRoutine, 30000);
