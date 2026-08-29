@@ -142,6 +142,7 @@
   .status-Pending{ background:var(--clay-100); color:var(--clay-600); border-color:rgba(181,80,45,.3); }
   .status-In-Progress{ background:var(--gold-100); color:var(--gold-600); border-color:rgba(201,162,39,.35);}
   .status-Done{ background:var(--emerald-100); color:var(--emerald-700); border-color:rgba(28,122,87,.3);}
+  .assign-select{ width:auto; padding:8px 10px; font-size:13px; font-weight:600; border-radius:7px; border:1px solid var(--line); color:var(--emerald-900); background-color: var(--ivory-50); }
   .note-input{ width:200px; padding:8px 10px; font-size:13px; }
 
   .add-task-box{ background: var(--ivory-100); border:1px dashed var(--gold-500); border-radius:12px; padding:16px; margin-top:18px; }
@@ -305,8 +306,6 @@
 // ==========================================
 // SUPABASE CREDENTIALS
 // ==========================================
-// Your Supabase backend is configured and working perfectly.
-// All database queries are handled through this javascript client.
 const SUPABASE_URL = "https://tomufxlnomhtyqkhsoen.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRvbXVmeGxub21odHlxa2hzb2VuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1MjEzMTYsImV4cCI6MjEwMjA5NzMxNn0.SdVdEbwhohm5WK650e9Duhq9W1WA7hb7UekdHDIe2yo";
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -330,7 +329,6 @@ async function loadData(){
 
     const { data: uData } = await supabaseClient.from('users').select('*');
     USERS = uData || [];
-    // Permanent Fix 1: Automatically handles capitalization like 'HOD' vs 'hod' from the database
     USERS.forEach(u => { if(u.role) u.role = u.role.toLowerCase(); });
 
     const { data: tData } = await supabaseClient.from('tasks').select('*');
@@ -408,7 +406,6 @@ async function doLogin(){
   err.style.display = 'none';
   currentUser = user;
   
-  // Permanent Fix 2: Ensures role check works during tab generation right after login
   if(currentUser.role) currentUser.role = currentUser.role.toLowerCase();
   
   if (currentUser.role === 'admin') { activeTab = 'overview'; activeDeptCode = null; } 
@@ -675,7 +672,6 @@ function renderAllTasksList(el){
 
 /* ---------------- DEPARTMENT TASK LIST (Smart Views) ---------------- */
 function renderDeptTasks(el, code, viewRole){
-  // 1. Robust matching for database departments
   const currentDept = DEPARTMENTS.find(d => d.code === code || d.name === code) || { name: code, code: code };
   const safeCode = currentDept.code;
   const deptDisplayName = currentDept.name;
@@ -685,7 +681,7 @@ function renderDeptTasks(el, code, viewRole){
   if (viewRole === 'employee') { list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); }
   if (taskFilter !== 'All') list = list.filter(t=>t.status===taskFilter);
 
-  // 2. Format names correctly to match user table strings
+  // Retrieve employees in this department for the Assign dropdowns
   let deptUsers = USERS.filter(u => {
     if (!u.department) return false;
     const uDept = u.department.toLowerCase().replace(/\s+/g, '');
@@ -693,11 +689,10 @@ function renderDeptTasks(el, code, viewRole){
     return uDept === cDept || u.department === currentDept.name;
   });
 
-  // 3. Setup dropdown
+  // Setup main dropdown for new tasks
   let assignOptions = `<option value="">-- Unassigned --</option>` 
                     + `<option value="DISTRIBUTE_ALL" style="font-weight:bold; color:var(--emerald-700);">➔ Distribute to ALL in Dept</option>`;
 
-  // Permanent Fix 3: Allows both admins AND HODs to select individual employees to assign tasks
   if (currentUser.role === 'admin' || currentUser.role === 'hod') {
       assignOptions += deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
   }
@@ -735,14 +730,14 @@ function renderDeptTasks(el, code, viewRole){
     <div class="section-head"><div><h2>${viewRole === 'employee' ? 'My Assigned Tasks' : deptDisplayName}</h2><div class="desc">${list.length} tasks on file</div></div></div>
     <div class="filter-row">${['All','Pending','In Progress','Done'].map(f=>`<div class="chip ${taskFilter===f?'active':''}" data-f="${f}">${f}</div>`).join('')}</div>
     
-    <div id="task-list">${list.length ? list.map(t=>taskRowHtml(t, viewRole)).join('') : '<div class="empty-note">No tasks match this filter.</div>'}</div>
+    <div id="task-list">${list.length ? list.map(t=>taskRowHtml(t, viewRole, deptUsers)).join('') : '<div class="empty-note">No tasks match this filter.</div>'}</div>
 
     ${addTaskHtml}
   `;
 
   if(viewRole === 'admin'){ document.getElementById('back-to-all').addEventListener('click', ()=>{ activeDeptCode = null; taskFilter='All'; renderContent(); }); }
   el.querySelectorAll('.chip').forEach(c=>{ c.addEventListener('click', ()=>{ taskFilter = c.dataset.f; renderDeptTasks(el, safeCode, viewRole); }); });
-  wireTaskRowEvents(el, safeCode, viewRole);
+  wireTaskRowEvents(el, safeCode, viewRole, deptUsers);
 
   if(document.getElementById('add-task-btn')){
       document.getElementById('add-task-btn').addEventListener('click', async ()=>{
@@ -751,7 +746,6 @@ function renderDeptTasks(el, code, viewRole){
         
         const assigned_val = document.getElementById('new-task-assign').value;
         
-        // Base task properties
         const baseTask = {
           department: safeCode,
           text: txt,
@@ -770,10 +764,8 @@ function renderDeptTasks(el, code, viewRole){
 
         let tasksToInsert = [];
 
-        // 4. Distribution Logic: Assign to ALL vs Single User
         if (assigned_val === 'DISTRIBUTE_ALL') {
             if(deptUsers.length === 0) { showToast('No users available in this department'); return; }
-            
             deptUsers.forEach(u => {
                 tasksToInsert.push({
                     ...baseTask,
@@ -790,7 +782,6 @@ function renderDeptTasks(el, code, viewRole){
             });
         }
 
-        // Bulk insert to Supabase
         const { data, error } = await supabaseClient.from('tasks').insert(tasksToInsert).select();
         
         if(error){ alert("DATABASE ERROR: " + error.message); } 
@@ -804,7 +795,7 @@ function renderDeptTasks(el, code, viewRole){
   }
 }
 
-function taskRowHtml(t, viewRole){
+function taskRowHtml(t, viewRole, deptUsers = []){
   const statusClass = 'status-' + (t.status || 'Pending').replace(' ','-');
   const priClass = 'badge-' + (t.priority || 'Medium').toLowerCase();
   
@@ -812,7 +803,6 @@ function taskRowHtml(t, viewRole){
   if (cat === 'Daily Task') cat = 'Check List'; 
   const catClass = cat === 'Check List' ? 'badge-checklist' : 'badge-delegated';
 
-  // Smart Delay & Overdue Logic against Today's Date or End Date
   const todayStr = new Date().toISOString().split('T')[0];
   let delayBadge = '';
   let dueText = t.due_date ? `Due: ${t.due_date}` : '';
@@ -844,6 +834,16 @@ function taskRowHtml(t, viewRole){
   const deleteBtnStyle = viewRole === 'employee' ? 'style="display:none;"' : '';
   const waBtnStyle = (t.mobile && viewRole !== 'employee') ? `<a href="${waLink}" target="_blank" class="btn btn-whatsapp btn-sm" title="Send Reminder">📱 Remind</a>` : '';
 
+  // Employee only sees read-only badge. Admins/HODs see assignment dropdown
+  const employeeAssignedBadge = (viewRole === 'employee' && t.assigned_to) ? `<span class="assigned-badge">${escapeHtml(t.assigned_to)}</span>` : '';
+
+  const delegationDropdown = (viewRole !== 'employee') ? `
+    <select class="assign-select" data-role="assign">
+      <option value="">-- Unassigned --</option>
+      ${deptUsers.map(u => `<option value="${escapeAttr(u.name)}" ${t.assigned_to === u.name ? 'selected' : ''}>👤 ${escapeHtml(u.name)}</option>`).join('')}
+    </select>
+  ` : '';
+
   return `<div class="task-row" data-id="${t.id}">
     <div class="txt">
       <div class="n">${escapeHtml(t.text)}</div>
@@ -854,7 +854,7 @@ function taskRowHtml(t, viewRole){
         ${t.due_date ? `<span class="${dueBadgeClass}">${dueText}</span>${delayBadge}` : ''}
       </div>
       <div class="meta">
-        ${t.assigned_to ? `<span class="assigned-badge">${escapeHtml(t.assigned_to)}</span>` : ''}
+        ${employeeAssignedBadge}
         ${t.start_date ? `<span>Start: ${t.start_date}</span>` : ''}
         ${t.end_date ? `<span>End: ${t.end_date}</span>` : ''}
         ${t.updated_at ? `<span>(Updated by ${escapeHtml(t.updated_by||'-')})</span>` : ''}
@@ -862,6 +862,7 @@ function taskRowHtml(t, viewRole){
     </div>
     <div class="controls">
       ${waBtnStyle}
+      ${delegationDropdown}
       <select class="status-select ${statusClass}" data-role="status"><option ${t.status==='Pending'?'selected':''}>Pending</option><option ${t.status==='In Progress'?'selected':''}>In Progress</option><option ${t.status==='Done'?'selected':''}>Done</option></select>
       <input type="text" class="note-input" data-role="notes" placeholder="Add a note..." value="${escapeAttr(t.notes||'')}">
       <button class="btn btn-ghost btn-sm" data-role="save">Save</button>
@@ -873,7 +874,7 @@ function taskRowHtml(t, viewRole){
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s){ return escapeHtml(s); }
 
-function wireTaskRowEvents(el, code, viewRole){
+function wireTaskRowEvents(el, code, viewRole, deptUsers){
   el.querySelectorAll('.task-row').forEach(row=>{
     const id = row.dataset.id;
     const select = row.querySelector('[data-role="status"]');
@@ -887,7 +888,22 @@ function wireTaskRowEvents(el, code, viewRole){
       const newStatus = select.value;
       const newNotes = row.querySelector('[data-role="notes"]').value;
       
-      // Auto-assign End Date when marked as Done (and clear it if unmarked)
+      // Look for the assignment dropdown (only exists for HODs and Admins)
+      const assignSelect = row.querySelector('[data-role="assign"]');
+      let newAssignedTo = task.assigned_to;
+      let newMobile = task.mobile;
+
+      if (assignSelect) {
+          newAssignedTo = assignSelect.value;
+          if (newAssignedTo) {
+              const assignedUser = USERS.find(u => u.name === newAssignedTo);
+              newMobile = assignedUser ? assignedUser.mobile : null;
+          } else {
+              newAssignedTo = null;
+              newMobile = null;
+          }
+      }
+      
       let newEndDate = task.end_date;
       if (newStatus === 'Done' && task.status !== 'Done') {
           newEndDate = new Date().toISOString().split('T')[0];
@@ -899,6 +915,8 @@ function wireTaskRowEvents(el, code, viewRole){
          status: newStatus, 
          notes: newNotes, 
          end_date: newEndDate,
+         assigned_to: newAssignedTo,
+         mobile: newMobile,
          updated_by: currentUser.name, 
          updated_at: new Date().toISOString() 
       }).eq('id', id);
@@ -908,8 +926,10 @@ function wireTaskRowEvents(el, code, viewRole){
         task.status = newStatus; 
         task.notes = newNotes; 
         task.end_date = newEndDate;
+        task.assigned_to = newAssignedTo;
+        task.mobile = newMobile;
         task.updated_by = currentUser.name;
-        showToast('Task updated!');
+        showToast('Task saved!');
         checkDueTasksQueue(); 
         renderDeptTasks(document.getElementById('content'), code, viewRole);
       }
