@@ -674,7 +674,7 @@ function renderDeptTasks(el, code, viewRole){
   if (viewRole === 'employee') { list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); }
   if (taskFilter !== 'All') list = list.filter(t=>t.status===taskFilter);
 
-  let deptUsers = USERS.filter(u => u.department === code);
+  let deptUsers = USERS.filter(u => u.department && u.department.toLowerCase().replace(/\s+/g, '') === code);
   let assignOptions = `<option value="">-- Unassigned --</option>` + deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
 
   let addTaskHtml = '';
