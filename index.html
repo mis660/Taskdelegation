@@ -159,6 +159,70 @@
   .users-table th{ background:var(--emerald-900); color:var(--ivory-50); text-align:left; padding:11px 14px; font-size:12px; text-transform:uppercase; letter-spacing:.6px; }
   .users-table td{ padding:11px 14px; border-top:1px solid var(--line); font-size:13.5px; vertical-align:middle; }
   .users-table tr:hover td{ background: var(--ivory-50); }
+
+
+  /* ---------- ANIMATED SCOREBOARD ---------- */
+  .scoreboard-wrap{ position:relative; }
+  .scoreboard-hero{
+    position:relative; overflow:hidden; border-radius:18px; padding:24px 26px; margin-bottom:20px;
+    background:linear-gradient(135deg,var(--emerald-950),var(--emerald-800));
+    box-shadow:0 16px 40px -22px rgba(7,39,30,.55);
+  }
+  .scoreboard-hero::before,.scoreboard-hero::after{ content:""; position:absolute; border-radius:50%; pointer-events:none; filter:blur(2px); }
+  .scoreboard-hero::before{ width:220px;height:220px; right:-70px;top:-110px; background:rgba(228,200,104,.13); }
+  .scoreboard-hero::after{ width:150px;height:150px; left:-70px;bottom:-90px; background:rgba(228,200,104,.08); }
+  .scoreboard-hero-grid{ position:relative; z-index:1; display:flex; justify-content:space-between; align-items:center; gap:20px; flex-wrap:wrap; }
+  .scoreboard-hero h3{ margin:0 0 6px; color:var(--gold-300); font-size:21px; }
+  .scoreboard-hero p{ margin:0; color:var(--ivory-100); font-size:13px; line-height:1.5; }
+  .score-summary{ display:flex; gap:10px; flex-wrap:wrap; }
+  .summary-pill{ min-width:92px; padding:10px 12px; border:1px solid rgba(228,200,104,.22); background:rgba(255,255,255,.06); border-radius:12px; text-align:center; }
+  .summary-pill .num{ display:block; color:var(--gold-300); font:700 21px 'JetBrains Mono',monospace; }
+  .summary-pill .lab{ display:block; color:rgba(250,247,239,.72); font-size:10px; text-transform:uppercase; letter-spacing:.8px; margin-top:3px; }
+  .leaderboard{ display:grid; gap:12px; }
+  .score-card{
+    --score:0%; --score-color:var(--emerald-600);
+    position:relative; overflow:hidden; display:grid; grid-template-columns:74px minmax(190px,1.2fr) minmax(180px,1fr) 120px auto;
+    gap:16px; align-items:center; background:#fff; border:1px solid var(--line); border-radius:16px; padding:15px 16px;
+    box-shadow:0 6px 18px -14px rgba(15,76,58,.45); opacity:0; transform:translateY(18px) scale(.985); animation:scoreCardIn .55s cubic-bezier(.2,.75,.25,1) forwards;
+    animation-delay:var(--delay,0ms); transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+  }
+  .score-card:hover{ transform:translateY(-3px) scale(1.003); box-shadow:0 14px 28px -18px rgba(15,76,58,.55); border-color:var(--gold-300); }
+  .score-card::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--score-color); }
+  .rank-badge{ width:52px;height:52px; margin-left:4px; border-radius:15px; display:flex; align-items:center; justify-content:center; font:800 20px 'JetBrains Mono',monospace; color:var(--emerald-950); background:linear-gradient(145deg,var(--gold-100),var(--gold-300)); box-shadow:inset 0 0 0 1px rgba(184,145,42,.25); }
+  .rank-badge.top{ font-size:24px; box-shadow:0 0 0 3px rgba(228,200,104,.14), inset 0 0 0 1px rgba(184,145,42,.35); }
+  .person-name{ font-weight:800; font-size:15px; color:var(--ink-900); }
+  .person-meta{ margin-top:5px; color:var(--ink-500); font-size:11.5px; }
+  .score-main{ display:flex; align-items:center; gap:12px; min-width:0; }
+  .score-ring{ width:64px;height:64px; flex:none; position:relative; display:grid; place-items:center; }
+  .score-ring svg{ width:64px;height:64px; transform:rotate(-90deg); }
+  .score-ring .ring-bg{ fill:none; stroke:var(--ivory-100); stroke-width:6; }
+  .score-ring .ring-fill{ fill:none; stroke:var(--score-color); stroke-width:6; stroke-linecap:round; stroke-dasharray:175.93; stroke-dashoffset:175.93; animation:ringFill 1.1s cubic-bezier(.2,.7,.25,1) forwards; animation-delay:calc(var(--delay,0ms) + 220ms); }
+  .ring-text{ position:absolute; font:700 13px 'JetBrains Mono',monospace; color:var(--score-color); }
+  .metric-block{ min-width:0; flex:1; }
+  .metric-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px; }
+  .metric-label{ font-size:10px; color:var(--ink-500); text-transform:uppercase; letter-spacing:.7px; font-weight:700; }
+  .score-points{ font:800 18px 'JetBrains Mono',monospace; color:var(--score-color); white-space:nowrap; }
+  .animated-bar{ height:8px; background:var(--ivory-100); border-radius:999px; overflow:hidden; }
+  .animated-bar > span{ display:block; height:100%; width:0; background:linear-gradient(90deg,var(--score-color),var(--gold-300)); border-radius:999px; animation:barGrow .9s cubic-bezier(.2,.7,.25,1) forwards; animation-delay:calc(var(--delay,0ms) + 120ms); }
+  .task-volume{ text-align:center; }
+  .task-volume .big{ display:block; font:700 16px 'JetBrains Mono',monospace; color:var(--ink-900); }
+  .task-volume .small{ display:block; font-size:10px; color:var(--ink-500); text-transform:uppercase; letter-spacing:.7px; margin-top:3px; }
+  .score-action{ text-align:right; }
+  .score-action .btn{ white-space:nowrap; }
+  .podium-note{ display:inline-flex; align-items:center; gap:5px; margin-top:7px; padding:4px 8px; border-radius:20px; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; background:var(--gold-100); color:var(--gold-600); }
+  .score-empty{ padding:28px; text-align:center; background:#fff; border:1px dashed var(--line); border-radius:14px; color:var(--ink-500); }
+  @keyframes scoreCardIn{ to{ opacity:1; transform:translateY(0) scale(1); } }
+  @keyframes barGrow{ to{ width:var(--target-width); } }
+  @keyframes ringFill{ to{ stroke-dashoffset:var(--ring-offset); } }
+  @media (max-width:900px){
+    .score-card{ grid-template-columns:62px 1fr; gap:12px; }
+    .score-card .score-main,.score-card .task-volume,.score-card .score-action{ grid-column:2; text-align:left; }
+    .score-card .score-main{ align-items:center; }
+    .score-card .score-action{ margin-top:2px; }
+  }
+  @media (prefers-reduced-motion:reduce){
+    .score-card,.score-card .ring-fill,.animated-bar > span{ animation:none !important; opacity:1; transform:none; width:var(--target-width,100%); stroke-dashoffset:var(--ring-offset,0); }
+  }
   .role-pill{ font-size:11px; font-weight:700; padding:2px 9px; border-radius:20px; }
   .role-admin{ background:var(--gold-100); color:var(--gold-600); }
   .role-hod{ background:#dbeafe; color:#0369a1; }
@@ -486,134 +550,183 @@ function deptStats(code){
 
 /* ---------------- 100-POINT SCOREBOARD ---------------- */
 function renderScoreboard(el){
-  
   let latestEvals = {};
   EVALUATIONS.forEach(e => {
     if(!latestEvals[e.employee_name] || e.created_at > latestEvals[e.employee_name].created_at) {
-        latestEvals[e.employee_name] = e;
+      latestEvals[e.employee_name] = e;
     }
   });
 
   // RESTRICT HOD SCOREBOARD TO THEIR DEPARTMENT ONLY + ALLOW ADMIN MULTI-SELECT
   let evalUsers = [];
   if (currentUser.role === 'admin') {
-      evalUsers = USERS.filter(u => u.role === 'employee' || u.role === 'hod');
-      
-      // If admin has selected specific departments to view, filter the list
-      if (window.scoreboardDeptFilters.length > 0) {
-          evalUsers = evalUsers.filter(u => {
-              if(!u.department) return false;
-              const uDept = u.department.toLowerCase().replace(/\s+/g, '');
-              return window.scoreboardDeptFilters.includes(uDept);
-          });
-      }
-  } else if (currentUser.role === 'hod') {
-      const myDept = currentUser.department ? currentUser.department.toLowerCase().replace(/\s+/g, '') : '';
-      evalUsers = USERS.filter(u => {
-          if (u.role !== 'employee' && u.role !== 'hod') return false;
-          const uDept = u.department ? u.department.toLowerCase().replace(/\s+/g, '') : '';
-          return uDept === myDept;
+    evalUsers = USERS.filter(u => u.role === 'employee' || u.role === 'hod');
+    if (window.scoreboardDeptFilters.length > 0) {
+      evalUsers = evalUsers.filter(u => {
+        if(!u.department) return false;
+        const uDept = u.department.toLowerCase().replace(/\s+/g, '');
+        return window.scoreboardDeptFilters.includes(uDept);
       });
+    }
+  } else if (currentUser.role === 'hod') {
+    const myDept = currentUser.department ? currentUser.department.toLowerCase().replace(/\s+/g, '') : '';
+    evalUsers = USERS.filter(u => {
+      if (u.role !== 'employee' && u.role !== 'hod') return false;
+      const uDept = u.department ? u.department.toLowerCase().replace(/\s+/g, '') : '';
+      return uDept === myDept;
+    });
   } else {
-      evalUsers = USERS.filter(u => u.name === currentUser.name);
+    evalUsers = USERS.filter(u => u.name === currentUser.name);
   }
-  
+
   let empRows = evalUsers.map(u => {
     let evalData = latestEvals[u.name];
     let totalScore = evalData ? parseFloat(evalData.total_score) : 0;
-    
+    totalScore = Number.isFinite(totalScore) ? Math.max(0, Math.min(100, totalScore)) : 0;
+
     let myTasks = TASKS.filter(t => t.assigned_to === u.name);
     let completed = myTasks.filter(t => t.status === 'Done').length;
     let total = myTasks.length;
-    
-    let canEvaluate = false;
-    if (currentUser.role === 'admin') {
-        canEvaluate = true; 
-    } else if (currentUser.role === 'hod' && u.role === 'employee' && u.department === currentUser.department) {
-        canEvaluate = true; 
-    }
 
-    return { 
-      name: u.name, 
+    let canEvaluate = false;
+    if (currentUser.role === 'admin') canEvaluate = true;
+    else if (currentUser.role === 'hod' && u.role === 'employee' && u.department === currentUser.department) canEvaluate = true;
+
+    return {
+      name: u.name,
       deptCode: u.department,
       role: u.role,
-      tasksCompleted: completed, 
+      tasksCompleted: completed,
       tasksTotal: total,
       kpiScore: totalScore,
       canEvaluate: canEvaluate
     };
   });
-  
+
   empRows.sort((a,b) => b.kpiScore - a.kpiScore);
 
-  let coachTitle = "100-Point HR Scorecard";
-  let coachMsg = currentUser.role === 'admin' 
-      ? "Track comprehensive monthly performance across all roles." 
-      : "Track monthly performance for your department employees.";
+  const avgScore = empRows.length ? Math.round(empRows.reduce((sum,r)=>sum+r.kpiScore,0) / empRows.length) : 0;
+  const highPerformers = empRows.filter(r => r.kpiScore >= 70).length;
+  const topScore = empRows.length ? Math.round(empRows[0].kpiScore) : 0;
 
-  // Generate Admin Multi-Select Filter UI
+  let coachTitle = '100-Point HR Scorecard';
+  let coachMsg = currentUser.role === 'admin'
+    ? 'Track comprehensive monthly performance across all roles.'
+    : 'Track monthly performance for your department employees.';
+
   let adminFiltersHtml = '';
   if (currentUser.role === 'admin') {
-      adminFiltersHtml = `
-        <div style="margin-bottom: 24px; background:#fff; padding:18px; border:1px solid var(--line); border-radius:12px;">
-          <label style="font-size:11px; font-weight:700; color:var(--ink-500); text-transform:uppercase; letter-spacing:.5px; margin-bottom:12px; display:block;">Filter Scoreboard by Department</label>
-          <div class="filter-row" id="scoreboard-filters" style="margin-bottom:0;">
-            <div class="chip ${window.scoreboardDeptFilters.length===0?'active':''}" data-dept="ALL">All Departments</div>
-            ${DEPARTMENTS.map(d => `<div class="chip ${window.scoreboardDeptFilters.includes(d.code)?'active':''}" data-dept="${d.code}">${escapeHtml(d.name)}</div>`).join('')}
-          </div>
+    adminFiltersHtml = `
+      <div style="margin-bottom:24px;background:#fff;padding:18px;border:1px solid var(--line);border-radius:12px;">
+        <label style="font-size:11px;font-weight:700;color:var(--ink-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;display:block;">Filter Scoreboard by Department</label>
+        <div class="filter-row" id="scoreboard-filters" style="margin-bottom:0;">
+          <div class="chip ${window.scoreboardDeptFilters.length===0?'active':''}" data-dept="ALL">All Departments</div>
+          ${DEPARTMENTS.map(d => `<div class="chip ${window.scoreboardDeptFilters.includes(d.code)?'active':''}" data-dept="${d.code}">${escapeHtml(d.name)}</div>`).join('')}
         </div>
-      `;
+      </div>`;
   }
 
+  const colorFor = p => p >= 70 ? 'var(--emerald-600)' : p >= 35 ? 'var(--gold-500)' : 'var(--clay-600)';
+  const rankLabel = idx => idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx+1}`;
+
   el.innerHTML = `
-    <div class="section-head"><div><h2>Performance Scoreboard</h2><div class="desc">100-Point Monthly KPI Evaluations</div></div></div>
-    
-    <div class="coach-banner"><div style="font-size:32px;">💡</div><div><h3>${coachTitle}</h3><p>${coachMsg}</p></div></div>
+    <div class="scoreboard-wrap">
+      <div class="section-head">
+        <div><h2>Performance Scoreboard</h2><div class="desc">100-Point Monthly KPI Evaluations</div></div>
+      </div>
 
-    ${adminFiltersHtml}
+      <div class="scoreboard-hero">
+        <div class="scoreboard-hero-grid">
+          <div>
+            <h3>${coachTitle}</h3>
+            <p>${coachMsg}</p>
+          </div>
+          <div class="score-summary">
+            <div class="summary-pill"><span class="num" data-count="${empRows.length}">0</span><span class="lab">People</span></div>
+            <div class="summary-pill"><span class="num" data-count="${avgScore}">0</span><span class="lab">Avg Score</span></div>
+            <div class="summary-pill"><span class="num" data-count="${topScore}">0</span><span class="lab">Top Score</span></div>
+            <div class="summary-pill"><span class="num" data-count="${highPerformers}">0</span><span class="lab">70+ Club</span></div>
+          </div>
+        </div>
+      </div>
 
-    <h3 style="color:var(--emerald-900); margin-bottom:12px; font-size:18px;">👤 Rankings</h3>
-    <table class="users-table">
-      <thead><tr><th>Rank & Name</th><th>Role / Dept</th><th>Task Volume</th><th>Overall KPI Score (Out of 100)</th>${currentUser.role !== 'employee' ? '<th>Action</th>' : ''}</tr></thead>
-      <tbody>
-        ${empRows.length > 0 ? empRows.map((r, idx)=>`
-          <tr>
-            <td><strong>#${idx+1} &nbsp; ${escapeHtml(r.name)}</strong></td>
-            <td>
-              <span class="role-pill role-${r.role}" style="margin-right:6px;">${r.role.toUpperCase()}</span>
-              <span style="color:var(--ink-500); font-size:12px;">${escapeHtml(deptName(r.deptCode))}</span>
-            </td>
-            <td>${r.tasksCompleted} / ${r.tasksTotal} done</td>
-            <td>
-              <div style="display:flex; align-items:center; gap:10px;">
-                <div class="bar-track" style="flex:1; max-width:140px;"><div class="bar-fill" style="width:${r.kpiScore}%; background:${barColor(r.kpiScore)}"></div></div>
-                <span class="mono" style="font-weight:600; font-size:14px; color:${barColor(r.kpiScore)}">${r.kpiScore} Pts</span>
+      ${adminFiltersHtml}
+
+      <div style="display:flex;justify-content:space-between;align-items:end;gap:10px;margin:4px 0 12px;">
+        <div><h3 style="color:var(--emerald-900);margin:0;font-size:18px;">👤 Live Rankings</h3><div class="desc" style="margin-top:3px;">Highest KPI score appears first</div></div>
+      </div>
+
+      <div class="leaderboard">
+        ${empRows.length > 0 ? empRows.map((r,idx)=>{
+          const pct = Math.round(r.kpiScore);
+          const clr = colorFor(pct);
+          const circumference = 175.93;
+          const offset = circumference - (circumference * pct / 100);
+          const delay = Math.min(idx * 85, 850);
+          return `
+          <div class="score-card" style="--score-color:${clr};--score:${pct}%;--delay:${delay}ms;">
+            <div class="rank-badge ${idx<3?'top':''}">${rankLabel(idx)}</div>
+            <div>
+              <div class="person-name">${escapeHtml(r.name)}</div>
+              <div class="person-meta">
+                <span class="role-pill role-${r.role}" style="margin-right:6px;">${r.role.toUpperCase()}</span>
+                ${escapeHtml(deptName(r.deptCode))}
               </div>
-            </td>
-            ${currentUser.role !== 'employee' ? `<td>${r.canEvaluate ? `<button class="btn btn-ghost btn-sm" onclick="openEvalModal('${escapeAttr(r.name)}')">Evaluate</button>` : `<span style="font-size:11px; color:var(--ink-300);">No Access</span>`}</td>` : ''}
-          </tr>
-        `).join('') : `<tr><td colspan="5" style="text-align:center; color:#666;">No evaluable users found.</td></tr>`}
-      </tbody>
-    </table>
-  `;
+              ${idx === 0 ? '<div class="podium-note">👑 Current Leader</div>' : ''}
+            </div>
 
-  // Attach event listeners for Admin Multi-Select Filters
+            <div class="score-main">
+              <div class="score-ring" style="--ring-offset:${offset};">
+                <svg viewBox="0 0 64 64" aria-hidden="true">
+                  <circle class="ring-bg" cx="32" cy="32" r="28"></circle>
+                  <circle class="ring-fill" cx="32" cy="32" r="28"></circle>
+                </svg>
+                <span class="ring-text" data-count="${pct}">0</span>
+              </div>
+              <div class="metric-block">
+                <div class="metric-top"><span class="metric-label">Overall KPI Score</span><span class="score-points"><span data-count="${pct}">0</span> / 100</span></div>
+                <div class="animated-bar"><span style="--target-width:${pct}%;"></span></div>
+              </div>
+            </div>
+
+            <div class="task-volume"><span class="big"><span data-count="${r.tasksCompleted}">0</span> / ${r.tasksTotal}</span><span class="small">Tasks Done</span></div>
+
+            <div class="score-action">
+              ${currentUser.role !== 'employee' ? (r.canEvaluate
+                ? `<button class="btn btn-ghost btn-sm" onclick="openEvalModal('${escapeAttr(r.name)}')">✎ Evaluate</button>`
+                : `<span style="font-size:11px;color:var(--ink-300);">No Access</span>`)
+              : ''}
+            </div>
+          </div>`;
+        }).join('') : '<div class="score-empty">No evaluable users found.</div>'}
+      </div>
+    </div>`;
+
+  // Animated number counters after the cards enter the page.
+  el.querySelectorAll('[data-count]').forEach((node, i) => {
+    const target = Number(node.dataset.count) || 0;
+    const duration = 850;
+    const startAt = performance.now() + Math.min(i * 15, 180);
+    const tick = now => {
+      if(now < startAt){ requestAnimationFrame(tick); return; }
+      const progress = Math.min(1, (now - startAt) / duration);
+      const eased = 1 - Math.pow(1-progress, 3);
+      node.textContent = Math.round(target * eased);
+      if(progress < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+
   if (currentUser.role === 'admin') {
-      el.querySelectorAll('#scoreboard-filters .chip').forEach(c => {
-          c.addEventListener('click', () => {
-              const d = c.dataset.dept;
-              if (d === 'ALL') {
-                  window.scoreboardDeptFilters = [];
-              } else {
-                  if (window.scoreboardDeptFilters.includes(d)) {
-                      window.scoreboardDeptFilters = window.scoreboardDeptFilters.filter(x => x !== d);
-                  } else {
-                      window.scoreboardDeptFilters.push(d);
-                  }
-              }
-              renderScoreboard(el);
-          });
+    el.querySelectorAll('#scoreboard-filters .chip').forEach(c => {
+      c.addEventListener('click', () => {
+        const d = c.dataset.dept;
+        if (d === 'ALL') window.scoreboardDeptFilters = [];
+        else if (window.scoreboardDeptFilters.includes(d)) window.scoreboardDeptFilters = window.scoreboardDeptFilters.filter(x => x !== d);
+        else window.scoreboardDeptFilters.push(d);
+        renderScoreboard(el);
       });
+    });
   }
 }
 
