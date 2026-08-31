@@ -280,7 +280,7 @@
 .tv-mode .metric-label,.tv-mode .task-volume .small{font-size:10px;}
 .tv-mode .score-action{display:none;}
 .tv-mode .scoreboard-tv-controls{display:flex!important;}
-.scoreboard-tv-controls{display:none;align-items:center;gap:8px;margin-bottom:10px;}
+.scoreboard-tv-controls{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
 .tv-status{font-size:11px;color:var(--ink-500);font-weight:600;}
 .tv-progress{height:4px;background:var(--ivory-100);border-radius:99px;overflow:hidden;margin:0 0 13px;}
 .tv-progress > span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--gold-300),var(--gold-600));transition:width linear;}
@@ -764,66 +764,98 @@ function renderScoreboard(el){
 
 /* ---------------- TV MODE / AUTO SCROLL ---------------- */
 let tvModeOn = false;
-let tvScrollTimer = null;
+let tvAnimFrame = null;
 let tvResetTimer = null;
 let tvCountdownTimer = null;
+let tvStartTime = 0;
+let tvDuration = 0;
 
 function stopTVScroll(){
-  clearTimeout(tvScrollTimer);
+  if(tvAnimFrame) cancelAnimationFrame(tvAnimFrame);
+  tvAnimFrame = null;
   clearTimeout(tvResetTimer);
   clearInterval(tvCountdownTimer);
-  tvScrollTimer = null; tvResetTimer = null; tvCountdownTimer = null;
+  tvResetTimer = null;
+  tvCountdownTimer = null;
   const bar = document.querySelector('#tv-progress > span');
-  if(bar){ bar.style.transition='none'; bar.style.width='0%'; }
+  if(bar){
+    bar.style.transition='none';
+    bar.style.width='0%';
+  }
 }
 
 function updateTVUi(message){
   const status = document.getElementById('tv-status');
   const btn = document.getElementById('tv-mode-btn');
   if(status) status.textContent = message;
-  if(btn) btn.textContent = tvModeOn ? '⏹ Exit TV Mode' : '📺 TV Mode';
+  if(btn) btn.textContent = tvModeOn ? '⏹ Exit TV Mode' : '📺 Start TV Mode';
+}
+
+function animateTVScroll(){
+  if(!tvModeOn) return;
+
+  const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  const elapsed = performance.now() - tvStartTime;
+  const progress = Math.min(1, elapsed / tvDuration);
+  // Very smooth linear movement so every employee is shown at a readable speed.
+  const eased = progress;
+  window.scrollTo(0, Math.round(maxScroll * eased));
+
+  const bar = document.querySelector('#tv-progress > span');
+  if(bar) bar.style.width = `${progress * 100}%`;
+
+  const cd = document.getElementById('tv-countdown');
+  if(cd) cd.textContent = progress < 1 ? `${Math.ceil((tvDuration-elapsed)/1000)}s` : '';
+
+  if(progress < 1){
+    tvAnimFrame = requestAnimationFrame(animateTVScroll);
+  }else{
+    // Hold at the bottom so the last employee is readable.
+    updateTVUi('Bottom of scoreboard — restarting…');
+    tvResetTimer = setTimeout(()=>{
+      if(!tvModeOn) return;
+      window.scrollTo(0,0);
+      const resetCd = document.getElementById('tv-countdown');
+      if(resetCd) resetCd.textContent = '';
+      setTimeout(startTVScroll, 1800);
+    }, 3500);
+  }
 }
 
 function startTVScroll(){
   if(!tvModeOn) return;
   stopTVScroll();
-  const root = document.documentElement;
-  const maxScroll = Math.max(0, root.scrollHeight - window.innerHeight);
+
+  // Start from the top every cycle.
+  window.scrollTo(0,0);
+  const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
   if(maxScroll <= 20){
     updateTVUi('All employees fit on screen');
     return;
   }
 
-  // Keep the movement slow enough to read each employee clearly.
-  const pixelsPerSecond = 42;
-  const duration = Math.max(18000, Math.round((maxScroll / pixelsPerSecond) * 1000));
+  // 1 pixel every ~55 ms => slow, readable TV movement. Minimum 20 sec cycle.
+  const pixelsPerSecond = 18;
+  tvDuration = Math.max(20000, Math.round((maxScroll / pixelsPerSecond) * 1000));
+  tvStartTime = performance.now() + 1200;
+
   const bar = document.querySelector('#tv-progress > span');
   if(bar){
-    bar.style.transition = `width ${duration}ms linear`;
-    requestAnimationFrame(()=>bar.style.width='100%');
+    bar.style.transition='none';
+    bar.style.width='0%';
   }
 
-  const endAt = Date.now() + duration;
-  tvCountdownTimer = setInterval(()=>{
-    const sec = Math.max(0, Math.ceil((endAt-Date.now())/1000));
-    const cd = document.getElementById('tv-countdown');
-    if(cd) cd.textContent = sec ? `${sec}s` : '';
-  },250);
-
   updateTVUi('Showing every employee automatically');
-  window.scrollTo({top:0,behavior:'instant'});
-  requestAnimationFrame(()=>{
-    window.scrollTo({top:maxScroll,behavior:'smooth'});
-  });
-
-  tvResetTimer = setTimeout(()=>{
+  tvCountdownTimer = setInterval(()=>{
     if(!tvModeOn) return;
-    window.scrollTo({top:0,behavior:'auto'});
-    clearInterval(tvCountdownTimer);
+    const remaining = Math.max(0, Math.ceil((tvStartTime + tvDuration - performance.now())/1000));
     const cd = document.getElementById('tv-countdown');
-    if(cd) cd.textContent = '';
-    tvScrollTimer = setTimeout(startTVScroll, 3500);
-  }, duration + 1200);
+    if(cd) cd.textContent = remaining ? `${remaining}s` : '';
+  }, 250);
+
+  setTimeout(()=>{
+    if(tvModeOn) tvAnimFrame = requestAnimationFrame(animateTVScroll);
+  }, 1200);
 }
 
 function toggleTVMode(){
@@ -835,7 +867,8 @@ function toggleTVMode(){
   if(tvModeOn){
     updateTVUi('Starting TV display…');
     try{ if(document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); }catch(e){}
-    startTVScroll();
+    // Give fullscreen a moment to settle before calculating page height.
+    setTimeout(startTVScroll, 500);
   }else{
     stopTVScroll();
     if(progress) progress.style.display='none';
@@ -845,7 +878,12 @@ function toggleTVMode(){
   }
 }
 
-window.addEventListener('resize',()=>{ if(tvModeOn) startTVScroll(); });
+window.addEventListener('resize',()=>{ if(tvModeOn) setTimeout(startTVScroll,150); });
+
+// Keep the TV display alive if the browser regains focus.
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden && tvModeOn) setTimeout(startTVScroll,250);
+});
 
 document.addEventListener('keydown',e=>{
   if(e.key.toLowerCase()==='t' && currentUser && activeTab==='scoreboard') toggleTVMode();
