@@ -261,6 +261,31 @@
   .eval-total { background: var(--ivory-100); padding: 16px; border-radius: 8px; margin: 20px 0; display: flex; justify-content: space-between; align-items: center; }
   .eval-total h3 { margin: 0; font-size: 16px; }
   .eval-total .score { font-family: 'JetBrains Mono', monospace; font-size: 24px; color: var(--emerald-800); }
+
+/* ---------- TV / AUTO SCROLL SCOREBOARD ---------- */
+.tv-toggle{display:inline-flex;align-items:center;gap:7px;margin-left:8px;}
+.tv-mode #login-screen{display:none!important;}
+.tv-mode #app-screen{display:block!important;}
+.tv-mode .topbar{position:sticky;top:0;z-index:40;padding:10px 22px;}
+.tv-mode .tabs{display:none!important;}
+.tv-mode .content{max-width:1500px;padding:18px 28px 90px;}
+.tv-mode .section-head{margin-bottom:10px;}
+.tv-mode .scoreboard-hero{margin-bottom:14px;}
+.tv-mode .score-summary{gap:8px;}
+.tv-mode .summary-pill{padding:7px 12px;}
+.tv-mode .summary-pill .num{font-size:21px;}
+.tv-mode .score-card{min-height:88px;padding:11px 16px;}
+.tv-mode .score-ring{width:58px;height:58px;}
+.tv-mode .person-name{font-size:15px;}
+.tv-mode .metric-label,.tv-mode .task-volume .small{font-size:10px;}
+.tv-mode .score-action{display:none;}
+.tv-mode .scoreboard-tv-controls{display:flex!important;}
+.scoreboard-tv-controls{display:none;align-items:center;gap:8px;margin-bottom:10px;}
+.tv-status{font-size:11px;color:var(--ink-500);font-weight:600;}
+.tv-progress{height:4px;background:var(--ivory-100);border-radius:99px;overflow:hidden;margin:0 0 13px;}
+.tv-progress > span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--gold-300),var(--gold-600));transition:width linear;}
+.tv-countdown{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--emerald-800);min-width:48px;text-align:right;}
+
 </style>
 </head>
 <body>
@@ -656,6 +681,13 @@ function renderScoreboard(el){
         <div><h3 style="color:var(--emerald-900);margin:0;font-size:18px;">👤 Live Rankings</h3><div class="desc" style="margin-top:3px;">Highest KPI score appears first</div></div>
       </div>
 
+      <div class="scoreboard-tv-controls" id="scoreboard-tv-controls">
+        <button class="btn btn-gold btn-sm" id="tv-mode-btn" onclick="toggleTVMode()">📺 TV Mode</button>
+        <span class="tv-status" id="tv-status">Auto-scroll is off</span>
+        <span class="tv-countdown" id="tv-countdown"></span>
+      </div>
+      <div class="tv-progress" id="tv-progress" style="display:none;"><span></span></div>
+
       <div class="leaderboard">
         ${empRows.length > 0 ? empRows.map((r,idx)=>{
           const pct = Math.round(r.kpiScore);
@@ -729,6 +761,96 @@ function renderScoreboard(el){
     });
   }
 }
+
+/* ---------------- TV MODE / AUTO SCROLL ---------------- */
+let tvModeOn = false;
+let tvScrollTimer = null;
+let tvResetTimer = null;
+let tvCountdownTimer = null;
+
+function stopTVScroll(){
+  clearTimeout(tvScrollTimer);
+  clearTimeout(tvResetTimer);
+  clearInterval(tvCountdownTimer);
+  tvScrollTimer = null; tvResetTimer = null; tvCountdownTimer = null;
+  const bar = document.querySelector('#tv-progress > span');
+  if(bar){ bar.style.transition='none'; bar.style.width='0%'; }
+}
+
+function updateTVUi(message){
+  const status = document.getElementById('tv-status');
+  const btn = document.getElementById('tv-mode-btn');
+  if(status) status.textContent = message;
+  if(btn) btn.textContent = tvModeOn ? '⏹ Exit TV Mode' : '📺 TV Mode';
+}
+
+function startTVScroll(){
+  if(!tvModeOn) return;
+  stopTVScroll();
+  const root = document.documentElement;
+  const maxScroll = Math.max(0, root.scrollHeight - window.innerHeight);
+  if(maxScroll <= 20){
+    updateTVUi('All employees fit on screen');
+    return;
+  }
+
+  // Keep the movement slow enough to read each employee clearly.
+  const pixelsPerSecond = 42;
+  const duration = Math.max(18000, Math.round((maxScroll / pixelsPerSecond) * 1000));
+  const bar = document.querySelector('#tv-progress > span');
+  if(bar){
+    bar.style.transition = `width ${duration}ms linear`;
+    requestAnimationFrame(()=>bar.style.width='100%');
+  }
+
+  const endAt = Date.now() + duration;
+  tvCountdownTimer = setInterval(()=>{
+    const sec = Math.max(0, Math.ceil((endAt-Date.now())/1000));
+    const cd = document.getElementById('tv-countdown');
+    if(cd) cd.textContent = sec ? `${sec}s` : '';
+  },250);
+
+  updateTVUi('Showing every employee automatically');
+  window.scrollTo({top:0,behavior:'instant'});
+  requestAnimationFrame(()=>{
+    window.scrollTo({top:maxScroll,behavior:'smooth'});
+  });
+
+  tvResetTimer = setTimeout(()=>{
+    if(!tvModeOn) return;
+    window.scrollTo({top:0,behavior:'auto'});
+    clearInterval(tvCountdownTimer);
+    const cd = document.getElementById('tv-countdown');
+    if(cd) cd.textContent = '';
+    tvScrollTimer = setTimeout(startTVScroll, 3500);
+  }, duration + 1200);
+}
+
+function toggleTVMode(){
+  tvModeOn = !tvModeOn;
+  document.body.classList.toggle('tv-mode', tvModeOn);
+  const progress = document.getElementById('tv-progress');
+  if(progress) progress.style.display = tvModeOn ? 'block' : 'none';
+
+  if(tvModeOn){
+    updateTVUi('Starting TV display…');
+    try{ if(document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); }catch(e){}
+    startTVScroll();
+  }else{
+    stopTVScroll();
+    if(progress) progress.style.display='none';
+    updateTVUi('Auto-scroll is off');
+    try{ if(document.fullscreenElement) document.exitFullscreen(); }catch(e){}
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+}
+
+window.addEventListener('resize',()=>{ if(tvModeOn) startTVScroll(); });
+
+document.addEventListener('keydown',e=>{
+  if(e.key.toLowerCase()==='t' && currentUser && activeTab==='scoreboard') toggleTVMode();
+  if(e.key==='Escape' && tvModeOn) toggleTVMode();
+});
 
 /* ---------------- EVALUATION MODAL LOGIC (65/35 Split) ---------------- */
 function openEvalModal(empName) {
