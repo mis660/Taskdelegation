@@ -125,6 +125,7 @@
   .badge-category { padding:3px 8px; border-radius:12px; font-weight:700; text-transform:uppercase; font-size:10px; border: 1px solid var(--line); }
   .badge-checklist { background: #e0f2fe; color: #0284c7; border-color: #bae6fd; } 
   .badge-delegated { background: #f3e8ff; color: #7e22ce; border-color: #d8b4fe; } 
+  .badge-metric { background: #fff7ed; color: #c2410c; border-color: #ffedd5; }
   
   .badge-priority { padding:3px 8px; border-radius:12px; font-weight:700; text-transform:uppercase; font-size:10px; }
   .badge-low { background:#f1f5f9; color:#475569; }
@@ -143,11 +144,11 @@
   .status-In-Progress{ background:var(--gold-100); color:var(--gold-600); border-color:rgba(201,162,39,.35);}
   .status-Done{ background:var(--emerald-100); color:var(--emerald-700); border-color:rgba(28,122,87,.3);}
   .assign-select{ width:auto; padding:8px 10px; font-size:13px; font-weight:600; border-radius:7px; border:1px solid var(--line); color:var(--emerald-900); background-color: var(--ivory-50); }
-  .note-input{ width:200px; padding:8px 10px; font-size:13px; }
+  .note-input{ width:200px; padding:8px 10px; font-size:13px; border:1px solid var(--line); border-radius:7px; }
 
   .add-task-box{ background: var(--ivory-100); border:1px dashed var(--gold-500); border-radius:12px; padding:16px; margin-top:18px; }
   .add-task-box .row{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
-  .add-task-box .row input, .add-task-box .row select { flex:1 1 120px; }
+  .add-task-box .row input, .add-task-box .row select { flex:1 1 120px; border:1px solid var(--line); border-radius:7px; padding:8px 10px;}
   .add-task-box label { font-size:10.5px; text-transform:uppercase; font-weight:600; color:var(--ink-500); margin-bottom:4px; display:block; }
 
   .coach-banner { background: linear-gradient(135deg, var(--emerald-900), var(--emerald-800)); color: var(--ivory-50); padding:20px; border-radius:12px; margin-bottom:24px; display:flex; gap:16px; align-items:center; }
@@ -240,7 +241,7 @@
   <div class="content" id="content"></div>
 </div>
 
-<!-- EVALUATION MODAL -->
+<!-- EVALUATION MODAL (65% TARGET / 35% MANAGER EVAL) -->
 <div class="modal-overlay" id="eval-modal">
   <div class="modal-content">
     <div class="modal-head">
@@ -253,23 +254,15 @@
     
     <div class="eval-row">
       <div class="eval-info">
-        <h4>1. Delegated Tasks / Commitments</h4>
-        <p>Auto-calculated (30%)</p>
+        <h4>1. Target vs Achievement Metrics</h4>
+        <p>Auto-calculated (65%)</p>
       </div>
-      <div class="eval-input"><span class="eval-auto" id="eval-delegated">0</span> / 30</div>
+      <div class="eval-input"><span class="eval-auto" id="eval-target-score">0</span> / 65</div>
     </div>
     
     <div class="eval-row">
       <div class="eval-info">
-        <h4>2. Daily Role KPIs / Priorities</h4>
-        <p>Auto-calculated Checklists (35%)</p>
-      </div>
-      <div class="eval-input"><span class="eval-auto" id="eval-kpi">0</span> / 35</div>
-    </div>
-
-    <div class="eval-row">
-      <div class="eval-info">
-        <h4>3. Company / Department Goal Contribution</h4>
+        <h4>2. Company / Department Goal Contribution</h4>
         <p>Manager Review (15%)</p>
       </div>
       <div class="eval-input"><input type="number" id="eval-goals" min="0" max="15" value="0" oninput="updateEvalTotal()"> / 15</div>
@@ -277,7 +270,7 @@
 
     <div class="eval-row">
       <div class="eval-info">
-        <h4>4. Attendance & Hygiene Factors</h4>
+        <h4>3. Attendance & Hygiene Factors</h4>
         <p>Manager Review (10%)</p>
       </div>
       <div class="eval-input"><input type="number" id="eval-attendance" min="0" max="10" value="0" oninput="updateEvalTotal()"> / 10</div>
@@ -285,7 +278,7 @@
 
     <div class="eval-row">
       <div class="eval-info">
-        <h4>5. Behaviour / Process Compliance</h4>
+        <h4>4. Behaviour / Process Compliance</h4>
         <p>Manager Review (10%)</p>
       </div>
       <div class="eval-input"><input type="number" id="eval-behaviour" min="0" max="10" value="0" oninput="updateEvalTotal()"> / 10</div>
@@ -578,21 +571,31 @@ function renderScoreboard(el){
   `;
 }
 
-/* ---------------- EVALUATION MODAL LOGIC ---------------- */
+/* ---------------- EVALUATION MODAL LOGIC (65/35 Split) ---------------- */
 function openEvalModal(empName) {
     currentEvalEmp = empName;
     document.getElementById('eval-emp-name').innerText = `Evaluate: ${empName}`;
     
-    let delTasks = TASKS.filter(t => t.assigned_to === empName && t.category === 'Delegated Task');
-    let delDone = delTasks.filter(t => t.status === 'Done').length;
-    let delScore = delTasks.length > 0 ? (delDone / delTasks.length) * 30 : 30; 
+    // Auto-calculate 65% based strictly on Target tasks
+    let targetTasks = TASKS.filter(t => t.assigned_to === empName && t.category === 'Target / Metric');
     
-    let kpiTasks = TASKS.filter(t => t.assigned_to === empName && (t.category === 'Check List' || t.category === 'Daily Task'));
-    let kpiDone = kpiTasks.filter(t => t.status === 'Done').length;
-    let kpiScore = kpiTasks.length > 0 ? (kpiDone / kpiTasks.length) * 35 : 35; 
+    let totalTarget = 0;
+    let totalAchieve = 0;
+    
+    targetTasks.forEach(t => { 
+        totalTarget += (parseFloat(t.score) || 0); 
+        totalAchieve += (parseFloat(t.notes) || 0); 
+    });
 
-    document.getElementById('eval-delegated').innerText = Math.round(delScore);
-    document.getElementById('eval-kpi').innerText = Math.round(kpiScore);
+    let auto65 = 0;
+    if (totalTarget > 0) {
+        // Calculate percentage and scale to 65 points, capped at 65.
+        auto65 = Math.min(65, (totalAchieve / totalTarget) * 65);
+    } else {
+        auto65 = 0; // If they have no target tasks, they get 0. Admin must assign targets to get this score!
+    }
+
+    document.getElementById('eval-target-score').innerText = Math.round(auto65);
     
     document.getElementById('eval-goals').value = 0;
     document.getElementById('eval-attendance').value = 0;
@@ -608,8 +611,8 @@ function closeEvalModal() {
 }
 
 function updateEvalTotal() {
-    let del = parseFloat(document.getElementById('eval-delegated').innerText) || 0;
-    let kpi = parseFloat(document.getElementById('eval-kpi').innerText) || 0;
+    let targetScore = parseFloat(document.getElementById('eval-target-score').innerText) || 0;
+    
     let goals = parseFloat(document.getElementById('eval-goals').value) || 0;
     let att = parseFloat(document.getElementById('eval-attendance').value) || 0;
     let beh = parseFloat(document.getElementById('eval-behaviour').value) || 0;
@@ -618,17 +621,16 @@ function updateEvalTotal() {
     if(att > 10) { att = 10; document.getElementById('eval-attendance').value = 10; }
     if(beh > 10) { beh = 10; document.getElementById('eval-behaviour').value = 10; }
 
-    let total = Math.round(del + kpi + goals + att + beh);
+    let total = Math.round(targetScore + goals + att + beh);
     document.getElementById('eval-total-score').innerText = `${total} / 100`;
 }
 
 async function saveEvaluation() {
-    let del = parseFloat(document.getElementById('eval-delegated').innerText) || 0;
-    let kpi = parseFloat(document.getElementById('eval-kpi').innerText) || 0;
+    let targetScore = parseFloat(document.getElementById('eval-target-score').innerText) || 0;
     let goals = parseFloat(document.getElementById('eval-goals').value) || 0;
     let att = parseFloat(document.getElementById('eval-attendance').value) || 0;
     let beh = parseFloat(document.getElementById('eval-behaviour').value) || 0;
-    let total = Math.round(del + kpi + goals + att + beh);
+    let total = Math.round(targetScore + goals + att + beh);
     
     let monthYear = new Date().toISOString().slice(0, 7); // "YYYY-MM" format
 
@@ -636,8 +638,8 @@ async function saveEvaluation() {
         employee_name: currentEvalEmp,
         evaluator_name: currentUser.name,
         month_year: monthYear,
-        delegated_score: del,
-        kpi_score: kpi,
+        delegated_score: targetScore, // storing the 65pt target score here
+        kpi_score: 0, // retired category
         goals_score: goals,
         attendance_score: att,
         behaviour_score: beh,
@@ -719,7 +721,13 @@ function renderDeptTasks(el, code, viewRole){
           <input type="text" id="new-task-text" placeholder="Task description..." style="flex: 1 1 100%;">
         </div>
         <div class="row">
-          <div><label>Category (For KPI Score)</label><select id="new-task-category"><option value="Check List">Check List (Area 2 KPI)</option><option value="Delegated Task" selected>Delegated Task (Area 1 KPI)</option></select></div>
+          <div><label>Category</label>
+            <select id="new-task-category" onchange="document.getElementById('target-box').style.display = this.value === 'Target / Metric' ? 'block' : 'none'">
+              <option value="Check List">Check List</option>
+              <option value="Delegated Task" selected>Delegated Task</option>
+              <option value="Target / Metric">Target / Metric (Numeric Goal)</option>
+            </select>
+          </div>
           <div><label>Assign To</label><select id="new-task-assign">${assignOptions}</select></div>
           <div><label>Frequency</label><select id="new-task-frequency">
             <option value="One-Time" selected>One-Time</option>
@@ -729,6 +737,10 @@ function renderDeptTasks(el, code, viewRole){
             <option value="Monthly">Monthly</option>
           </select></div>
           <div><label>Priority</label><select id="new-task-priority"><option value="Low">Low</option><option value="Medium" selected>Medium</option><option value="High">High</option></select></div>
+        </div>
+        <div id="target-box" style="display:none; width:100%; margin-bottom:10px;">
+          <label>Target Number (e.g. 500 for Barcoding)</label>
+          <input type="number" id="new-task-target" placeholder="Enter target amount..." style="width:100%; padding:10px; border:1px solid var(--line); border-radius:7px;">
         </div>
         <div class="row">
           <div><label>Start Date</label><input type="date" id="new-task-start"></div>
@@ -757,20 +769,22 @@ function renderDeptTasks(el, code, viewRole){
         const txt = document.getElementById('new-task-text').value.trim();
         if(!txt){ showToast('Type a task description first'); return; }
         
+        const catValue = document.getElementById('new-task-category').value;
         const assigned_val = document.getElementById('new-task-assign').value;
+        const targetVal = catValue === 'Target / Metric' ? parseFloat(document.getElementById('new-task-target').value || 0) : 0;
         
         const baseTask = {
           department: safeCode,
           text: txt,
-          category: document.getElementById('new-task-category').value,
+          category: catValue,
           frequency: document.getElementById('new-task-frequency').value,
           priority: document.getElementById('new-task-priority').value,
-          score: 0, 
+          score: targetVal, // Using score column to hold the TARGET
           start_date: document.getElementById('new-task-start').value || null,
           due_date: document.getElementById('new-task-due').value || null,
           end_date: null,
           status: 'Pending',
-          notes: '',
+          notes: '', // Notes will hold the ACHIEVEMENT
           updated_by: currentUser.name,
           updated_at: new Date().toISOString()
         };
@@ -800,7 +814,7 @@ function renderDeptTasks(el, code, viewRole){
         if(error){ alert("DATABASE ERROR: " + error.message); } 
         else {
           if(data) data.forEach(d => TASKS.push(d));
-          showToast(tasksToInsert.length > 1 ? `Checklist distributed to ${tasksToInsert.length} employees!` : 'Task added successfully!');
+          showToast(tasksToInsert.length > 1 ? `Task distributed to ${tasksToInsert.length} employees!` : 'Task added successfully!');
           checkDueTasksQueue(); 
           renderDeptTasks(el, safeCode, viewRole);
         }
@@ -814,7 +828,10 @@ function taskRowHtml(t, viewRole, deptUsers = []){
   
   let cat = t.category || 'Delegated Task';
   if (cat === 'Daily Task') cat = 'Check List'; 
-  const catClass = cat === 'Check List' ? 'badge-checklist' : 'badge-delegated';
+  
+  let catClass = 'badge-delegated';
+  if (cat === 'Check List') catClass = 'badge-checklist';
+  if (cat === 'Target / Metric') catClass = 'badge-metric';
 
   const todayStr = new Date().toISOString().split('T')[0];
   let delayBadge = '';
@@ -847,7 +864,6 @@ function taskRowHtml(t, viewRole, deptUsers = []){
   const deleteBtnStyle = viewRole === 'employee' ? 'style="display:none;"' : '';
   const waBtnStyle = (t.mobile && viewRole !== 'employee') ? `<a href="${waLink}" target="_blank" class="btn btn-whatsapp btn-sm" title="Send Reminder">📱 Remind</a>` : '';
 
-  // Employee only sees read-only badge. Admins/HODs see the assignment dropdown right on the row
   const employeeAssignedBadge = (viewRole === 'employee' && t.assigned_to) ? `<span class="assigned-badge">${escapeHtml(t.assigned_to)}</span>` : '';
 
   const delegationDropdown = (viewRole !== 'employee') ? `
@@ -858,6 +874,30 @@ function taskRowHtml(t, viewRole, deptUsers = []){
     </select>
   ` : '';
 
+  // DYNAMIC CONTROLS BASED ON CATEGORY
+  let controlsHtml = '';
+  
+  if (cat === 'Target / Metric') {
+      let achieveVal = t.notes || '';
+      controlsHtml = `
+        ${waBtnStyle}
+        ${delegationDropdown}
+        <div style="background:var(--ivory-100); padding:7px 12px; border-radius:6px; font-weight:700; font-size:12.5px; color:var(--emerald-800); border:1px solid var(--line);">🎯 Target: ${t.score || 0}</div>
+        <input type="number" class="note-input" data-role="achieve-input" placeholder="Your Achievement..." value="${escapeAttr(achieveVal)}" style="width:160px;">
+        <button class="btn btn-ghost btn-sm" data-role="save-target">Save</button>
+        <button class="btn btn-danger btn-sm" data-role="delete" title="Remove task" ${deleteBtnStyle}>✕</button>
+      `;
+  } else {
+      controlsHtml = `
+        ${waBtnStyle}
+        ${delegationDropdown}
+        <select class="status-select ${statusClass}" data-role="status"><option ${t.status==='Pending'?'selected':''}>Pending</option><option ${t.status==='In Progress'?'selected':''}>In Progress</option><option ${t.status==='Done'?'selected':''}>Done</option></select>
+        <input type="text" class="note-input" data-role="notes" placeholder="Add a note..." value="${escapeAttr(t.notes||'')}">
+        <button class="btn btn-ghost btn-sm" data-role="save">Save</button>
+        <button class="btn btn-danger btn-sm" data-role="delete" title="Remove task" ${deleteBtnStyle}>✕</button>
+      `;
+  }
+
   return `<div class="task-row" data-id="${t.id}">
     <div class="txt">
       <div class="n">${escapeHtml(t.text)}</div>
@@ -866,6 +906,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
         ${t.frequency && t.frequency !== 'One-Time' ? `<span class="badge-frequency">🔁 ${t.frequency}</span>` : ''}
         <span class="badge-priority ${priClass}">${t.priority || 'Medium'}</span>
         ${t.due_date ? `<span class="${dueBadgeClass}">${dueText}</span>${delayBadge}` : ''}
+        ${t.status === 'Done' ? `<span class="badge-checklist" style="background:#dcfce7; color:#ea580c; border-color:#fed7aa;">✔ DONE</span>` : ''}
       </div>
       <div class="meta">
         ${employeeAssignedBadge}
@@ -875,12 +916,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
       </div>
     </div>
     <div class="controls">
-      ${waBtnStyle}
-      ${delegationDropdown}
-      <select class="status-select ${statusClass}" data-role="status"><option ${t.status==='Pending'?'selected':''}>Pending</option><option ${t.status==='In Progress'?'selected':''}>In Progress</option><option ${t.status==='Done'?'selected':''}>Done</option></select>
-      <input type="text" class="note-input" data-role="notes" placeholder="Add a note..." value="${escapeAttr(t.notes||'')}">
-      <button class="btn btn-ghost btn-sm" data-role="save">Save</button>
-      <button class="btn btn-danger btn-sm" data-role="delete" title="Remove task" ${deleteBtnStyle}>✕</button>
+      ${controlsHtml}
     </div>
   </div>`;
 }
@@ -891,129 +927,151 @@ function escapeAttr(s){ return escapeHtml(s); }
 function wireTaskRowEvents(el, code, viewRole, deptUsers){
   el.querySelectorAll('.task-row').forEach(row=>{
     const id = row.dataset.id;
-    const select = row.querySelector('[data-role="status"]');
-    
-    select.addEventListener('change', ()=>{ select.className = 'status-select status-' + select.value.replace(' ','-'); });
-    
-    row.querySelector('[data-role="save"]').addEventListener('click', async ()=>{
-      const task = TASKS.find(t=>t.id == id);
-      if(!task) return;
-      
-      const newStatus = select.value;
-      const newNotes = row.querySelector('[data-role="notes"]').value;
-      
-      let newEndDate = task.end_date;
-      if (newStatus === 'Done' && task.status !== 'Done') {
-          newEndDate = new Date().toISOString().split('T')[0];
-      } else if (newStatus !== 'Done') {
-          newEndDate = null;
-      }
-      
-      // Inline Assignment Logic for HODs and Admins
-      const assignSelect = row.querySelector('[data-role="assign"]');
-      let newAssignedTo = task.assigned_to;
-      let newMobile = task.mobile;
+    const task = TASKS.find(t=>t.id == id);
+    if(!task) return;
 
-      if (assignSelect) {
-          // If HOD decides to distribute this specific existing task to everyone in the department inline
-          if (assignSelect.value === 'DISTRIBUTE_ALL') {
-              if (deptUsers.length === 0) { showToast('No users available'); return; }
-              if (!confirm('This will create a copy of this task for every employee in the department. Continue?')) {
-                  assignSelect.value = task.assigned_to || ''; // reset if cancelled
-                  return;
-              }
-              
-              let firstUser = deptUsers[0]; // Assign original task to the first user
-              let clonedTasks = [];
-              
-              // Prepare clones for everyone else
-              for(let i = 1; i < deptUsers.length; i++){
-                  clonedTasks.push({
-                      department: task.department,
-                      text: task.text,
-                      category: task.category,
-                      frequency: task.frequency,
-                      priority: task.priority,
-                      score: 0,
-                      start_date: task.start_date,
-                      due_date: task.due_date,
-                      end_date: newEndDate,
-                      status: newStatus,
-                      notes: newNotes,
-                      assigned_to: deptUsers[i].name,
-                      mobile: deptUsers[i].mobile || null,
-                      updated_by: currentUser.name,
-                      updated_at: new Date().toISOString()
-                  });
-              }
-              
-              // 1. Update the original row for the first user
-              await supabaseClient.from('tasks').update({ 
-                   status: newStatus, notes: newNotes, end_date: newEndDate, assigned_to: firstUser.name, mobile: firstUser.mobile || null, updated_by: currentUser.name, updated_at: new Date().toISOString() 
-              }).eq('id', id);
-              
-              // 2. Insert the clones for everyone else
-              if (clonedTasks.length > 0) {
-                  const { data } = await supabaseClient.from('tasks').insert(clonedTasks).select();
-                  if(data) data.forEach(d => TASKS.push(d));
-              }
-              
-              task.status = newStatus; task.notes = newNotes; task.end_date = newEndDate; task.assigned_to = firstUser.name; task.mobile = firstUser.mobile;
-              showToast('Distributed to ALL employees!');
-              renderDeptTasks(document.getElementById('content'), code, viewRole);
-              return; // Stop here since we've handled the distribution
-          } 
-          // Standard specific employee assignment
-          else {
-              newAssignedTo = assignSelect.value;
-              if (newAssignedTo) {
-                  const assignedUser = USERS.find(u => u.name === newAssignedTo);
-                  newMobile = assignedUser ? assignedUser.mobile : null;
-              } else {
-                  newAssignedTo = null;
-                  newMobile = null;
-              }
-          }
-      }
-      
-      const { error } = await supabaseClient.from('tasks').update({ 
-         status: newStatus, 
-         notes: newNotes, 
-         end_date: newEndDate,
-         assigned_to: newAssignedTo,
-         mobile: newMobile,
-         updated_by: currentUser.name, 
-         updated_at: new Date().toISOString() 
-      }).eq('id', id);
-
-      if(error){ alert('DATABASE ERROR updating task: ' + error.message); } 
-      else {
-        task.status = newStatus; 
-        task.notes = newNotes; 
-        task.end_date = newEndDate;
-        task.assigned_to = newAssignedTo;
-        task.mobile = newMobile;
-        task.updated_by = currentUser.name;
-        showToast('Task saved!');
-        checkDueTasksQueue(); 
-        renderDeptTasks(document.getElementById('content'), code, viewRole);
-      }
-    });
-    
-    if(viewRole !== 'employee') {
-        row.querySelector('[data-role="delete"]').addEventListener('click', async ()=>{
-          if(!confirm('Remove this task from the list?')) return;
-          const { error } = await supabaseClient.from('tasks').delete().eq('id', id);
-          if(error){ alert('DATABASE ERROR deleting task: ' + error.message); } 
-          else {
-            TASKS = TASKS.filter(t=>t.id != id);
-            showToast('Task removed');
-            checkDueTasksQueue(); 
-            renderDeptTasks(document.getElementById('content'), code, viewRole);
-          }
+    // --- STANDARD TASK SAVE LOGIC ---
+    const saveBtn = row.querySelector('[data-role="save"]');
+    if (saveBtn) {
+        const select = row.querySelector('[data-role="status"]');
+        select.addEventListener('change', ()=>{ select.className = 'status-select status-' + select.value.replace(' ','-'); });
+        
+        saveBtn.addEventListener('click', async ()=>{
+          const newStatus = select.value;
+          const newNotes = row.querySelector('[data-role="notes"]').value;
+          await processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, code, viewRole);
         });
     }
+
+    // --- TARGET/METRIC TASK SAVE LOGIC ---
+    const saveTargetBtn = row.querySelector('[data-role="save-target"]');
+    if (saveTargetBtn) {
+        saveTargetBtn.addEventListener('click', async ()=>{
+            const achieveInput = row.querySelector('[data-role="achieve-input"]').value;
+            const targetScore = parseFloat(task.score) || 0;
+            const achievedVal = parseFloat(achieveInput) || 0;
+            
+            // Auto mark as done if target met
+            let newStatus = achievedVal >= targetScore && targetScore > 0 ? 'Done' : 'In Progress';
+            
+            await processTaskUpdate(task, id, newStatus, achieveInput, row, deptUsers, code, viewRole);
+        });
+    }
+    
+    // --- DELETE LOGIC ---
+    if(viewRole !== 'employee') {
+        const delBtn = row.querySelector('[data-role="delete"]');
+        if (delBtn) {
+            delBtn.addEventListener('click', async ()=>{
+              if(!confirm('Remove this task from the list?')) return;
+              const { error } = await supabaseClient.from('tasks').delete().eq('id', id);
+              if(error){ alert('DATABASE ERROR deleting task: ' + error.message); } 
+              else {
+                TASKS = TASKS.filter(t=>t.id != id);
+                showToast('Task removed');
+                checkDueTasksQueue(); 
+                renderDeptTasks(document.getElementById('content'), code, viewRole);
+              }
+            });
+        }
+    }
   });
+}
+
+// Helper to handle the database save to avoid repeating code
+async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, code, viewRole) {
+    let newEndDate = task.end_date;
+    if (newStatus === 'Done' && task.status !== 'Done') {
+        newEndDate = new Date().toISOString().split('T')[0];
+    } else if (newStatus !== 'Done') {
+        newEndDate = null;
+    }
+    
+    // Inline Assignment Logic for HODs and Admins
+    const assignSelect = row.querySelector('[data-role="assign"]');
+    let newAssignedTo = task.assigned_to;
+    let newMobile = task.mobile;
+
+    if (assignSelect) {
+        // Distribute All inline
+        if (assignSelect.value === 'DISTRIBUTE_ALL') {
+            if (deptUsers.length === 0) { showToast('No users available'); return; }
+            if (!confirm('This will create a copy of this task for every employee in the department. Continue?')) {
+                assignSelect.value = task.assigned_to || ''; // reset if cancelled
+                return;
+            }
+            
+            let firstUser = deptUsers[0]; 
+            let clonedTasks = [];
+            
+            for(let i = 1; i < deptUsers.length; i++){
+                clonedTasks.push({
+                    department: task.department,
+                    text: task.text,
+                    category: task.category,
+                    frequency: task.frequency,
+                    priority: task.priority,
+                    score: task.score,
+                    start_date: task.start_date,
+                    due_date: task.due_date,
+                    end_date: newEndDate,
+                    status: newStatus,
+                    notes: newNotes,
+                    assigned_to: deptUsers[i].name,
+                    mobile: deptUsers[i].mobile || null,
+                    updated_by: currentUser.name,
+                    updated_at: new Date().toISOString()
+                });
+            }
+            
+            await supabaseClient.from('tasks').update({ 
+                 status: newStatus, notes: newNotes, end_date: newEndDate, assigned_to: firstUser.name, mobile: firstUser.mobile || null, updated_by: currentUser.name, updated_at: new Date().toISOString() 
+            }).eq('id', id);
+            
+            if (clonedTasks.length > 0) {
+                const { data } = await supabaseClient.from('tasks').insert(clonedTasks).select();
+                if(data) data.forEach(d => TASKS.push(d));
+            }
+            
+            task.status = newStatus; task.notes = newNotes; task.end_date = newEndDate; task.assigned_to = firstUser.name; task.mobile = firstUser.mobile;
+            showToast('Distributed to ALL employees!');
+            renderDeptTasks(document.getElementById('content'), code, viewRole);
+            return; 
+        } 
+        else {
+            newAssignedTo = assignSelect.value;
+            if (newAssignedTo) {
+                const assignedUser = USERS.find(u => u.name === newAssignedTo);
+                newMobile = assignedUser ? assignedUser.mobile : null;
+            } else {
+                newAssignedTo = null;
+                newMobile = null;
+            }
+        }
+    }
+    
+    const { error } = await supabaseClient.from('tasks').update({ 
+       status: newStatus, 
+       notes: newNotes, 
+       end_date: newEndDate,
+       assigned_to: newAssignedTo,
+       mobile: newMobile,
+       updated_by: currentUser.name, 
+       updated_at: new Date().toISOString() 
+    }).eq('id', id);
+
+    if(error){ alert('DATABASE ERROR updating task: ' + error.message); } 
+    else {
+      task.status = newStatus; 
+      task.notes = newNotes; 
+      task.end_date = newEndDate;
+      task.assigned_to = newAssignedTo;
+      task.mobile = newMobile;
+      task.updated_by = currentUser.name;
+      showToast('Task saved!');
+      checkDueTasksQueue(); 
+      renderDeptTasks(document.getElementById('content'), code, viewRole);
+    }
 }
 
 /* ---------------- ADMIN CONTROL (DEPARTMENTS & USERS) ---------------- */
@@ -1105,20 +1163,15 @@ window.deleteDept = async function(id) {
 
 /* ---------------- 6 PM AUTOMATED DAILY TASK QUEUE ---------------- */
 function check6PMRoutine() {
-  // Only run this for users who have permission to send reminders
   if (!currentUser || currentUser.role === 'employee') return;
 
   const now = new Date();
   
-  // Check if it is exactly 18:00 (6:00 PM)
   if (now.getHours() === 18 && now.getMinutes() === 0) {
-      
-      // Prevent running multiple times within the same minute
       if (window._hasRun6PM) return;
       window._hasRun6PM = true;
       setTimeout(() => { window._hasRun6PM = false; }, 65000);
 
-      // Find all Daily Tasks / Check Lists that are NOT Done and have a mobile number
       const pendingDaily = TASKS.filter(t => 
         (t.category === 'Daily Task' || t.category === 'Check List') && 
         t.status !== 'Done' && 
@@ -1126,21 +1179,17 @@ function check6PMRoutine() {
       );
 
       if (pendingDaily.length > 0) {
-          // Push them to the smart reminder queue
           autoRemindQueue = pendingDaily;
-          
           const btn = document.getElementById('smart-remind-btn');
           const countSpan = document.getElementById('remind-count');
           btn.style.display = 'inline-flex';
           countSpan.innerText = autoRemindQueue.length;
           btn.className = 'btn btn-whatsapp-alert btn-sm';
-          
           showToast(`🔔 6 PM Alert: ${pendingDaily.length} Daily Tasks remain pending!`);
       }
   }
 }
 
-// Run the clock checker every 30 seconds
 setInterval(check6PMRoutine, 30000);
 
 /* ---------------- INIT ---------------- */
