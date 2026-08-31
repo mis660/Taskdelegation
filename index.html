@@ -1103,12 +1103,6 @@ window.deleteDept = async function(id) {
     else { showToast('Department removed'); await loadData(); renderAdminControl(document.getElementById('content')); }
 };
 
-/* ---------------- INIT ---------------- */
-(async function init(){ })();
-</script>
-</body>
-</html>
-
 /* ---------------- 6 PM AUTOMATED DAILY TASK QUEUE ---------------- */
 function check6PMRoutine() {
   // Only run this for users who have permission to send reminders
@@ -1148,3 +1142,9 @@ function check6PMRoutine() {
 
 // Run the clock checker every 30 seconds
 setInterval(check6PMRoutine, 30000);
+
+/* ---------------- INIT ---------------- */
+(async function init(){ })();
+</script>
+</body>
+</html>
