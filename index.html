@@ -175,7 +175,7 @@
   .empty-note{ color:var(--ink-500); font-size:13.5px; padding:20px; text-align:center; background:#fff; border:1px dashed var(--line); border-radius:12px; }
 
   .filter-row{ display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
-  .chip{ padding:7px 14px; border-radius:20px; border:1px solid var(--line); font-size:12.5px; font-weight:600; cursor:pointer; color:var(--ink-500); background:#fff; }
+  .chip{ padding:7px 14px; border-radius:20px; border:1px solid var(--line); font-size:12.5px; font-weight:600; cursor:pointer; color:var(--ink-500); background:#fff; transition: all 0.15s ease; }
   .chip.active{ background:var(--emerald-800); color:#fff; border-color:var(--emerald-800); }
 
   /* Modal Styles */
@@ -313,6 +313,8 @@ let activeDeptCode = null;
 let taskFilter = 'All';
 let autoRemindQueue = []; 
 
+// Persist the admin's multi-select department filters
+window.scoreboardDeptFilters = window.scoreboardDeptFilters || [];
 let currentEvalEmp = '';
 
 async function loadData(){
@@ -492,10 +494,19 @@ function renderScoreboard(el){
     }
   });
 
-  // RESTRICT HOD SCOREBOARD TO THEIR DEPARTMENT ONLY
+  // RESTRICT HOD SCOREBOARD TO THEIR DEPARTMENT ONLY + ALLOW ADMIN MULTI-SELECT
   let evalUsers = [];
   if (currentUser.role === 'admin') {
       evalUsers = USERS.filter(u => u.role === 'employee' || u.role === 'hod');
+      
+      // If admin has selected specific departments to view, filter the list
+      if (window.scoreboardDeptFilters.length > 0) {
+          evalUsers = evalUsers.filter(u => {
+              if(!u.department) return false;
+              const uDept = u.department.toLowerCase().replace(/\s+/g, '');
+              return window.scoreboardDeptFilters.includes(uDept);
+          });
+      }
   } else if (currentUser.role === 'hod') {
       const myDept = currentUser.department ? currentUser.department.toLowerCase().replace(/\s+/g, '') : '';
       evalUsers = USERS.filter(u => {
@@ -540,10 +551,26 @@ function renderScoreboard(el){
       ? "Track comprehensive monthly performance across all roles." 
       : "Track monthly performance for your department employees.";
 
+  // Generate Admin Multi-Select Filter UI
+  let adminFiltersHtml = '';
+  if (currentUser.role === 'admin') {
+      adminFiltersHtml = `
+        <div style="margin-bottom: 24px; background:#fff; padding:18px; border:1px solid var(--line); border-radius:12px;">
+          <label style="font-size:11px; font-weight:700; color:var(--ink-500); text-transform:uppercase; letter-spacing:.5px; margin-bottom:12px; display:block;">Filter Scoreboard by Department</label>
+          <div class="filter-row" id="scoreboard-filters" style="margin-bottom:0;">
+            <div class="chip ${window.scoreboardDeptFilters.length===0?'active':''}" data-dept="ALL">All Departments</div>
+            ${DEPARTMENTS.map(d => `<div class="chip ${window.scoreboardDeptFilters.includes(d.code)?'active':''}" data-dept="${d.code}">${escapeHtml(d.name)}</div>`).join('')}
+          </div>
+        </div>
+      `;
+  }
+
   el.innerHTML = `
     <div class="section-head"><div><h2>Performance Scoreboard</h2><div class="desc">100-Point Monthly KPI Evaluations</div></div></div>
     
     <div class="coach-banner"><div style="font-size:32px;">💡</div><div><h3>${coachTitle}</h3><p>${coachMsg}</p></div></div>
+
+    ${adminFiltersHtml}
 
     <h3 style="color:var(--emerald-900); margin-bottom:12px; font-size:18px;">👤 Rankings</h3>
     <table class="users-table">
@@ -569,6 +596,25 @@ function renderScoreboard(el){
       </tbody>
     </table>
   `;
+
+  // Attach event listeners for Admin Multi-Select Filters
+  if (currentUser.role === 'admin') {
+      el.querySelectorAll('#scoreboard-filters .chip').forEach(c => {
+          c.addEventListener('click', () => {
+              const d = c.dataset.dept;
+              if (d === 'ALL') {
+                  window.scoreboardDeptFilters = [];
+              } else {
+                  if (window.scoreboardDeptFilters.includes(d)) {
+                      window.scoreboardDeptFilters = window.scoreboardDeptFilters.filter(x => x !== d);
+                  } else {
+                      window.scoreboardDeptFilters.push(d);
+                  }
+              }
+              renderScoreboard(el);
+          });
+      });
+  }
 }
 
 /* ---------------- EVALUATION MODAL LOGIC (65/35 Split) ---------------- */
