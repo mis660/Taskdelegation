@@ -1094,7 +1094,7 @@ function renderDeptTasks(el, code, viewRole){
   let addTaskHtml = '';
   if(viewRole === 'admin') {
       let assignOptions = `<option value="DISTRIBUTE_ALL">➔ Distribute to ALL in Dept</option>`
-                        + deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.role)}</option>`).join('');
+                        + deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
 
       addTaskHtml = `
       <div class="add-task-box">
@@ -1116,13 +1116,36 @@ function renderDeptTasks(el, code, viewRole){
               ${assignOptions}
             </datalist>
           </div>
-          <div><label>Frequency</label><select id="new-task-frequency">
-            <option value="One-Time" selected>One-Time</option>
-            <option value="Daily">Daily</option>
-            <option value="Weekly">Weekly</option>
-            <option value="Twice a Month">Twice a Month</option>
-            <option value="Monthly">Monthly</option>
-          </select></div>
+          <div><label>Frequency</label>
+            <select id="new-task-frequency" onchange="
+              document.getElementById('weekly-day-box').style.display = this.value === 'Weekly' ? 'block' : 'none';
+              document.getElementById('monthly-date-box').style.display = (this.value === 'Monthly' || this.value === '3 Months' || this.value === '6 Months') ? 'block' : 'none';
+            ">
+              <option value="One-Time" selected>One-Time</option>
+              <option value="Daily">Daily</option>
+              <option value="Weekly">Weekly</option>
+              <option value="Twice a Month">Twice a Month</option>
+              <option value="Monthly">Monthly</option>
+              <option value="3 Months">3 Months</option>
+              <option value="6 Months">6 Months</option>
+            </select>
+          </div>
+          <div id="weekly-day-box" style="display:none;">
+            <label>Day of Week</label>
+            <select id="new-task-weekly-day" style="width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:7px;">
+              <option value="Monday">Monday</option>
+              <option value="Tuesday">Tuesday</option>
+              <option value="Wednesday">Wednesday</option>
+              <option value="Thursday">Thursday</option>
+              <option value="Friday">Friday</option>
+              <option value="Saturday">Saturday</option>
+              <option value="Sunday">Sunday</option>
+            </select>
+          </div>
+          <div id="monthly-date-box" style="display:none;">
+            <label>Select Date</label>
+            <input type="date" id="new-task-monthly-date" style="width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:7px; font-family:'Inter', sans-serif;">
+          </div>
           <div><label>Priority</label><select id="new-task-priority"><option value="Low">Low</option><option value="Medium" selected>Medium</option><option value="High">High</option></select></div>
         </div>
         <div id="target-box" style="display:none; width:100%; margin-bottom:10px;">
@@ -1181,11 +1204,22 @@ function renderDeptTasks(el, code, viewRole){
         const assigned_val = document.getElementById('new-task-assign').value;
         const targetVal = catValue === 'Target / Metric' ? parseFloat(document.getElementById('new-task-target').value || 0) : 0;
 
+        let freqValue = document.getElementById('new-task-frequency').value;
+        if (freqValue === 'Weekly') {
+            const weekDay = document.getElementById('new-task-weekly-day').value;
+            freqValue = `Weekly (${weekDay})`;
+        } else if (freqValue === 'Monthly' || freqValue === '3 Months' || freqValue === '6 Months') {
+            const monthDate = document.getElementById('new-task-monthly-date').value;
+            if (monthDate) {
+                freqValue = `${freqValue} (${monthDate})`;
+            }
+        }
+
         const baseTask = {
           department: safeCode,
           text: txt,
           category: catValue,
-          frequency: document.getElementById('new-task-frequency').value,
+          frequency: freqValue, 
           priority: document.getElementById('new-task-priority').value,
           score: targetVal, 
           start_date: document.getElementById('new-task-start').value || null,
