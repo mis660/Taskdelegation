@@ -1093,9 +1093,8 @@ function renderDeptTasks(el, code, viewRole){
   // HIDE "ADD TASK" BOX FOR EVERYONE EXCEPT ADMINS
   let addTaskHtml = '';
   if(viewRole === 'admin') {
-      let assignOptions = `<option value="">-- Unassigned --</option>` 
-                        + `<option value="DISTRIBUTE_ALL" style="font-weight:bold; color:var(--emerald-700);">➔ Distribute to ALL in Dept</option>`
-                        + deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
+      let assignOptions = `<option value="DISTRIBUTE_ALL">➔ Distribute to ALL in Dept</option>`
+                        + deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.role)}</option>`).join('');
 
       addTaskHtml = `
       <div class="add-task-box">
@@ -1111,7 +1110,12 @@ function renderDeptTasks(el, code, viewRole){
               <option value="Target / Metric">Target / Metric (Numeric Goal)</option>
             </select>
           </div>
-          <div><label>Assign To</label><select id="new-task-assign">${assignOptions}</select></div>
+          <div><label>Assign To</label>
+            <input type="text" id="new-task-assign" list="assign-list" placeholder="Search name..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:7px; font-size:13px; font-family:'Inter', sans-serif;">
+            <datalist id="assign-list">
+              ${assignOptions}
+            </datalist>
+          </div>
           <div><label>Frequency</label><select id="new-task-frequency">
             <option value="One-Time" selected>One-Time</option>
             <option value="Daily">Daily</option>
