@@ -438,6 +438,70 @@ function showToast(msg){
 }
 
 // ==========================================
+// SMART RENEWAL DATE GENERATOR
+// ==========================================
+function getNextDueDate(freqStr, currentDueStr) {
+    if (!freqStr || freqStr === 'One-Time' || freqStr === 'One-Time ()') return null;
+
+    let baseDate = currentDueStr ? new Date(currentDueStr) : new Date();
+    if (isNaN(baseDate.getTime())) baseDate = new Date(); 
+    
+    let nextDate = new Date(baseDate);
+
+    if (freqStr === 'Daily') {
+        nextDate.setDate(nextDate.getDate() + 1);
+    }
+    else if (freqStr.startsWith('Weekly')) {
+        const days = { 'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6 };
+        const match = freqStr.match(/\((.*?)\)/);
+        if (match && days[match[1]] !== undefined) {
+            const targetDay = days[match[1]];
+            nextDate.setDate(nextDate.getDate() + 1);
+            while (nextDate.getDay() !== targetDay) {
+                nextDate.setDate(nextDate.getDate() + 1);
+            }
+        } else {
+            nextDate.setDate(nextDate.getDate() + 7);
+        }
+    }
+    else if (freqStr === 'Twice a Month') {
+        if (nextDate.getDate() < 15) {
+            nextDate.setDate(15);
+        } else {
+            nextDate.setMonth(nextDate.getMonth() + 1);
+            nextDate.setDate(1);
+        }
+    }
+    else {
+        let monthsToAdd = 1;
+        if (freqStr.startsWith('3 Months')) monthsToAdd = 3;
+        else if (freqStr.startsWith('6 Months')) monthsToAdd = 6;
+        else if (freqStr.startsWith('Yearly')) monthsToAdd = 12;
+
+        const match = freqStr.match(/\((.*?)\)/);
+        if (match) {
+            let anchorParts = match[1].split('-');
+            if (anchorParts.length === 3) {
+                let targetDay = parseInt(anchorParts[2]);
+                nextDate.setMonth(nextDate.getMonth() + monthsToAdd);
+                let maxDaysInNewMonth = new Date(nextDate.getFullYear(), nextDate.getMonth() + 1, 0).getDate();
+                nextDate.setDate(Math.min(targetDay, maxDaysInNewMonth));
+            } else {
+                nextDate.setMonth(nextDate.getMonth() + monthsToAdd);
+            }
+        } else {
+            nextDate.setMonth(nextDate.getMonth() + monthsToAdd);
+        }
+    }
+
+    // Format safely to local timezone to prevent UTC off-by-one shifts
+    let y = nextDate.getFullYear();
+    let m = String(nextDate.getMonth() + 1).padStart(2, '0');
+    let d = String(nextDate.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+// ==========================================
 // SMART REMINDER QUEUE
 // ==========================================
 function checkDueTasksQueue() {
@@ -1119,7 +1183,7 @@ function renderDeptTasks(el, code, viewRole){
           <div><label>Frequency</label>
             <select id="new-task-frequency" onchange="
               document.getElementById('weekly-day-box').style.display = this.value === 'Weekly' ? 'block' : 'none';
-              document.getElementById('monthly-date-box').style.display = (this.value === 'Monthly' || this.value === '3 Months' || this.value === '6 Months') ? 'block' : 'none';
+              document.getElementById('monthly-date-box').style.display = (this.value === 'Monthly' || this.value === '3 Months' || this.value === '6 Months' || this.value === 'Yearly') ? 'block' : 'none';
             ">
               <option value="One-Time" selected>One-Time</option>
               <option value="Daily">Daily</option>
@@ -1128,6 +1192,7 @@ function renderDeptTasks(el, code, viewRole){
               <option value="Monthly">Monthly</option>
               <option value="3 Months">3 Months</option>
               <option value="6 Months">6 Months</option>
+              <option value="Yearly">Yearly</option>
             </select>
           </div>
           <div id="weekly-day-box" style="display:none;">
@@ -1208,7 +1273,7 @@ function renderDeptTasks(el, code, viewRole){
         if (freqValue === 'Weekly') {
             const weekDay = document.getElementById('new-task-weekly-day').value;
             freqValue = `Weekly (${weekDay})`;
-        } else if (freqValue === 'Monthly' || freqValue === '3 Months' || freqValue === '6 Months') {
+        } else if (freqValue === 'Monthly' || freqValue === '3 Months' || freqValue === '6 Months' || freqValue === 'Yearly') {
             const monthDate = document.getElementById('new-task-monthly-date').value;
             if (monthDate) {
                 freqValue = `${freqValue} (${monthDate})`;
@@ -1423,8 +1488,11 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers){
 // Helper to handle the database save to avoid repeating code
 async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, code, viewRole) {
     let newEndDate = task.end_date;
+    let isNewlyCompleted = false;
+
     if (newStatus === 'Done' && task.status !== 'Done') {
         newEndDate = new Date().toISOString().split('T')[0];
+        isNewlyCompleted = true;
     } else if (newStatus !== 'Done') {
         newEndDate = null;
     }
@@ -1510,7 +1578,43 @@ async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, 
       task.assigned_to = newAssignedTo;
       task.mobile = newMobile;
       task.updated_by = currentUser.name;
-      showToast('Task saved!');
+      
+      // AUTO RENEWAL LOGIC
+      if (isNewlyCompleted && task.frequency && task.frequency !== 'One-Time') {
+          const nextDue = getNextDueDate(task.frequency, task.due_date);
+          if (nextDue) {
+              const clonedTask = {
+                  department: task.department,
+                  text: task.text,
+                  category: task.category,
+                  frequency: task.frequency,
+                  priority: task.priority,
+                  score: task.category === 'Target / Metric' ? parseFloat(task.score) || 0 : 0,
+                  start_date: newEndDate, // new task starts today
+                  due_date: nextDue,
+                  end_date: null,
+                  status: 'Pending',
+                  notes: '', 
+                  assigned_to: task.assigned_to,
+                  mobile: task.mobile,
+                  updated_by: currentUser.name,
+                  updated_at: new Date().toISOString()
+              };
+
+              const { data: renewedTasks, error: renewErr } = await supabaseClient.from('tasks').insert([clonedTask]).select();
+              if (!renewErr && renewedTasks) {
+                  renewedTasks.forEach(d => TASKS.push(d));
+                  showToast(`Task Marked Done & Renewed for ${nextDue}!`);
+              } else {
+                  showToast('Task saved!');
+              }
+          } else {
+              showToast('Task saved!');
+          }
+      } else {
+          showToast('Task saved!');
+      }
+
       checkDueTasksQueue(); 
       renderDeptTasks(document.getElementById('content'), code, viewRole);
     }
