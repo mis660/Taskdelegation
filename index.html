@@ -141,7 +141,7 @@
   .task-row .controls{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;}
   .status-select{ width:auto; min-width:110px; padding:8px 10px; font-size:13px; font-weight:600; border-radius:7px; }
   
-  /* NEW STATUS COLORS (Pending removed, Not Done is the default action state) */
+  /* NEW STATUS COLORS */
   .status-Not-Done, .status-Pending{ background:var(--clay-100); color:var(--clay-600); border-color:rgba(181,80,45,.3); }
   .status-Done{ background:var(--emerald-100); color:var(--emerald-700); border-color:rgba(28,122,87,.3);}
   .status-On-Leave{ background:#e0f2fe; color:#0284c7; border-color:#bae6fd;}
@@ -441,6 +441,19 @@ function showToast(msg){
 }
 
 // ==========================================
+// SMART FILTER LOGIC FOR FUTURE TASKS
+// ==========================================
+function getLocalToday() {
+    const dNow = new Date();
+    return `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
+}
+
+// Hide future auto-renewed tasks from active scoring and lists until their start date arrives
+function isActiveTask(t) {
+    return t.status === 'Done' || !t.start_date || t.start_date <= getLocalToday();
+}
+
+// ==========================================
 // SMART RENEWAL DATE GENERATOR
 // ==========================================
 function getNextDueDate(freqStr, currentDueStr) {
@@ -629,7 +642,7 @@ function pctClass(p){ return p>=70?'pct-high':(p>=35?'pct-mid':'pct-low'); }
 function barColor(p){ return p>=70?'var(--emerald-600)':(p>=35?'var(--gold-500)':'var(--clay-600)'); }
 
 function deptStats(code){
-  const list = TASKS.filter(t=>t.department===code);
+  const list = TASKS.filter(t=> t.department===code && isActiveTask(t));
   const done = list.filter(t=>t.status==='Done').length;
   const pct = list.length ? Math.round((done/list.length)*100) : 0;
   return {total:list.length, done, pct};
@@ -671,7 +684,7 @@ function renderScoreboard(el){
     let totalScore = evalData ? parseFloat(evalData.total_score) : 0;
     totalScore = Number.isFinite(totalScore) ? Math.max(0, Math.min(100, totalScore)) : 0;
 
-    let myTasks = TASKS.filter(t => t.assigned_to === u.name);
+    let myTasks = TASKS.filter(t => t.assigned_to === u.name && isActiveTask(t));
     let completed = myTasks.filter(t => t.status === 'Done').length;
     let total = myTasks.length;
 
@@ -982,7 +995,7 @@ function openEvalModal(empName) {
     currentEvalEmp = empName;
     document.getElementById('eval-emp-name').innerText = `Evaluate: ${empName}`;
 
-    let myTasks = TASKS.filter(t => t.assigned_to === empName);
+    let myTasks = TASKS.filter(t => t.assigned_to === empName && isActiveTask(t));
     
     // Completely ignore "On Leave" tasks from math to prevent penalties!
     let targetTasks = myTasks.filter(t => t.category === 'Target / Metric' && t.status !== 'On Leave');
@@ -1109,8 +1122,9 @@ async function saveEvaluation() {
 
 /* ---------------- OVERVIEW (admin) ---------------- */
 function renderOverview(el){
-  const totalTasks = TASKS.length;
-  const totalDone = TASKS.filter(t=>t.status==='Done').length;
+  const activeTasks = TASKS.filter(isActiveTask);
+  const totalTasks = activeTasks.length;
+  const totalDone = activeTasks.filter(t=>t.status==='Done').length;
   const overallPct = totalTasks ? Math.round((totalDone/totalTasks)*100) : 0;
   el.innerHTML = `
     <div class="section-head"><div><h2>Company Overview</h2><div class="desc">${totalDone} of ${totalTasks} tasks completed across ${DEPARTMENTS.length} departments &nbsp;•&nbsp; ${overallPct}% overall</div></div></div>
@@ -1148,16 +1162,12 @@ function renderDeptTasks(el, code, viewRole){
 
   if (viewRole === 'employee') { list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); }
   
-  // Create a local date string for the Future Task filter
-  const dNow = new Date();
-  const localTodayStr = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
-
   if (taskFilter !== 'All') {
       list = list.filter(t => t.status === taskFilter || (taskFilter === 'Not Done' && (t.status === 'Pending' || !t.status)));
       
       // FIX: Hide future tasks from the "Not Done" list so they don't clutter the current day
       if (taskFilter === 'Not Done') {
-          list = list.filter(t => !t.start_date || t.start_date <= localTodayStr);
+          list = list.filter(t => !t.start_date || t.start_date <= getLocalToday());
       }
   }
 
@@ -1631,7 +1641,7 @@ async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, 
                   frequency: task.frequency,
                   priority: task.priority,
                   score: task.score, // Keeps the target number
-                  start_date: nextDue, // New task starts today
+                  start_date: nextDue, // New task starts on its due date so it stays hidden till then
                   due_date: nextDue, // Automatically calculated next date!
                   end_date: null,
                   status: 'Not Done', // Fresh status
@@ -1648,7 +1658,7 @@ async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, 
                   alert("RENEWAL DATABASE ERROR: " + renewErr.message);
               } else if (renewedTasks) {
                   renewedTasks.forEach(d => TASKS.push(d));
-                  showToast(`Task saved & auto-renewed for ${nextDue}. Check the "Not Done" tab!`);
+                  showToast(`Task saved! Renewed task for ${nextDue} will stay hidden until then.`);
               }
           } else {
               showToast('Task saved!');
