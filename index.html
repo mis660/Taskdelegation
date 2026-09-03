@@ -139,10 +139,13 @@
   .assigned-badge{ display:inline-block; background:var(--emerald-100); color:var(--emerald-800); font-size:11px; font-weight:600; padding:3px 9px; border-radius:20px; }
 
   .task-row .controls{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;}
-  .status-select{ width:auto; min-width:130px; padding:8px 10px; font-size:13px; font-weight:600; border-radius:7px; }
-  .status-Pending{ background:var(--clay-100); color:var(--clay-600); border-color:rgba(181,80,45,.3); }
-  .status-In-Progress{ background:var(--gold-100); color:var(--gold-600); border-color:rgba(201,162,39,.35);}
+  .status-select{ width:auto; min-width:110px; padding:8px 10px; font-size:13px; font-weight:600; border-radius:7px; }
+  
+  /* NEW STATUS COLORS (Pending removed, Not Done is the default action state) */
+  .status-Not-Done, .status-Pending{ background:var(--clay-100); color:var(--clay-600); border-color:rgba(181,80,45,.3); }
   .status-Done{ background:var(--emerald-100); color:var(--emerald-700); border-color:rgba(28,122,87,.3);}
+  .status-On-Leave{ background:#e0f2fe; color:#0284c7; border-color:#bae6fd;}
+
   .assign-select{ width:auto; padding:8px 10px; font-size:13px; font-weight:600; border-radius:7px; border:1px solid var(--line); color:var(--emerald-900); background-color: var(--ivory-50); }
   .note-input{ width:200px; padding:8px 10px; font-size:13px; border:1px solid var(--line); border-radius:7px; }
 
@@ -441,7 +444,7 @@ function showToast(msg){
 // SMART RENEWAL DATE GENERATOR
 // ==========================================
 function getNextDueDate(freqStr, currentDueStr) {
-    if (!freqStr || freqStr === 'One-Time' || freqStr === 'One-Time ()') return null;
+    if (!freqStr || freqStr.startsWith('One-Time') || freqStr === '') return null;
 
     let baseDate = currentDueStr ? new Date(currentDueStr) : new Date();
     if (isNaN(baseDate.getTime())) baseDate = new Date(); 
@@ -454,23 +457,20 @@ function getNextDueDate(freqStr, currentDueStr) {
     else if (freqStr.startsWith('Weekly')) {
         const days = { 'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6 };
         const match = freqStr.match(/\((.*?)\)/);
+        
+        nextDate.setDate(nextDate.getDate() + 1);
         if (match && days[match[1]] !== undefined) {
             const targetDay = days[match[1]];
-            nextDate.setDate(nextDate.getDate() + 1);
             while (nextDate.getDay() !== targetDay) {
                 nextDate.setDate(nextDate.getDate() + 1);
             }
         } else {
-            nextDate.setDate(nextDate.getDate() + 7);
+            nextDate.setDate(nextDate.getDate() + 6);
         }
     }
     else if (freqStr === 'Twice a Month') {
-        if (nextDate.getDate() < 15) {
-            nextDate.setDate(15);
-        } else {
-            nextDate.setMonth(nextDate.getMonth() + 1);
-            nextDate.setDate(1);
-        }
+        nextDate.setMonth(nextDate.getMonth() + 1);
+        nextDate.setDate(1);
     }
     else {
         let monthsToAdd = 1;
@@ -494,7 +494,6 @@ function getNextDueDate(freqStr, currentDueStr) {
         }
     }
 
-    // Format safely to local timezone to prevent UTC off-by-one shifts
     let y = nextDate.getFullYear();
     let m = String(nextDate.getMonth() + 1).padStart(2, '0');
     let d = String(nextDate.getDate()).padStart(2, '0');
@@ -513,7 +512,7 @@ function checkDueTasksQueue() {
   const today = new Date().toISOString().split('T')[0];
 
   autoRemindQueue = TASKS.filter(t => 
-    t.status !== 'Done' && t.mobile && t.due_date && t.due_date <= today
+    (t.status === 'Not Done' || t.status === 'Pending') && t.mobile && t.due_date && t.due_date <= today
   );
 
   const btn = document.getElementById('smart-remind-btn');
@@ -978,19 +977,21 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape' && tvModeOn) toggleTVMode();
 });
 
-/* ---------------- EVALUATION MODAL LOGIC (65/35 Split) ---------------- */
+/* ---------------- EVALUATION MODAL LOGIC (65/35 Split with Penalty Free 'On Leave') ---------------- */
 function openEvalModal(empName) {
     currentEvalEmp = empName;
     document.getElementById('eval-emp-name').innerText = `Evaluate: ${empName}`;
 
     let myTasks = TASKS.filter(t => t.assigned_to === empName);
-    let targetTasks = myTasks.filter(t => t.category === 'Target / Metric');
+    
+    // Completely ignore "On Leave" tasks from math to prevent penalties!
+    let targetTasks = myTasks.filter(t => t.category === 'Target / Metric' && t.status !== 'On Leave');
 
     let auto65 = 0;
     let methodText = "Auto-calculated (65%)";
     let titleText = "1. Target vs Achievement Metrics";
 
-    // SCENARIO 1: Employee has Target/Metric tasks assigned (Calculates out of 65)
+    // SCENARIO 1: Employee has Target/Metric tasks assigned
     if (targetTasks.length > 0) {
         let totalTarget = 0;
         let totalAchieve = 0;
@@ -1007,14 +1008,16 @@ function openEvalModal(empName) {
         methodText = "Target Tasks Auto-calculated (65%)";
         titleText = "1. Target vs Achievement Metrics";
     } 
-    // SCENARIO 2: No Target Tasks. Calculate using Check List (30) and Delegated (35)
+    // SCENARIO 2: No Target Tasks. 
     else {
-        let checkListTasks = myTasks.filter(t => t.category === 'Check List' || t.category === 'Daily Task');
-        let delegatedTasks = myTasks.filter(t => t.category === 'Delegated Task');
+        // Completely ignore "On Leave" tasks from denominator logic!
+        let checkListTasks = myTasks.filter(t => (t.category === 'Check List' || t.category === 'Daily Task') && t.status !== 'On Leave');
+        let delegatedTasks = myTasks.filter(t => t.category === 'Delegated Task' && t.status !== 'On Leave');
 
         let clScore = 0;
         let delScore = 0;
 
+        // "Not Done" tasks are included in this length, so they drop the percentage. "On Leave" are excluded, saving them!
         if (checkListTasks.length > 0) {
             let clDone = checkListTasks.filter(t => t.status === 'Done').length;
             clScore = (clDone / checkListTasks.length) * 30; // Max 30 points
@@ -1025,7 +1028,7 @@ function openEvalModal(empName) {
             delScore = (delDone / delegatedTasks.length) * 35; // Max 35 points
         }
         
-        // Anti-penalty adjustment: If an employee ONLY has Checklists or ONLY Delegated, scale it to max 65
+        // Anti-penalty adjustment
         if (checkListTasks.length === 0 && delegatedTasks.length > 0) {
             delScore = (delegatedTasks.filter(t => t.status === 'Done').length / delegatedTasks.length) * 65;
         } else if (delegatedTasks.length === 0 && checkListTasks.length > 0) {
@@ -1144,7 +1147,11 @@ function renderDeptTasks(el, code, viewRole){
   let list = TASKS.filter(t => t.department === safeCode || t.department === currentDept.name);
 
   if (viewRole === 'employee') { list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); }
-  if (taskFilter !== 'All') list = list.filter(t=>t.status===taskFilter);
+  
+  if (taskFilter !== 'All') {
+      // Show old "Pending" tasks under the new "Not Done" filter
+      list = list.filter(t => t.status === taskFilter || (taskFilter === 'Not Done' && t.status === 'Pending'));
+  }
 
   // Retrieve employees in this department for the Assign dropdowns
   let deptUsers = USERS.filter(u => {
@@ -1154,9 +1161,9 @@ function renderDeptTasks(el, code, viewRole){
     return uDept === cDept || u.department === currentDept.name;
   });
 
-  // HIDE "ADD TASK" BOX FOR EVERYONE EXCEPT ADMINS
+  // SHOW "ADD TASK" BOX FOR ADMINS AND HODS
   let addTaskHtml = '';
-  if(viewRole === 'admin') {
+  if(viewRole === 'admin' || viewRole === 'hod') {
       let assignOptions = `<option value="DISTRIBUTE_ALL">➔ Distribute to ALL in Dept</option>`
                         + deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
 
@@ -1231,7 +1238,7 @@ function renderDeptTasks(el, code, viewRole){
     
     <div class="filter-row" style="align-items:center; justify-content: space-between;">
       <div style="display:flex; gap:8px;">
-        ${['All','Pending','In Progress','Done'].map(f=>`<div class="chip ${taskFilter===f?'active':''}" data-f="${f}">${f}</div>`).join('')}
+        ${['All','Not Done','Done','On Leave'].map(f=>`<div class="chip ${taskFilter===f?'active':''}" data-f="${f}">${f}</div>`).join('')}
       </div>
       <div>
         <input type="text" id="task-list-search" placeholder="Search tasks or employees..." style="padding:9px 14px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; min-width:260px;">
@@ -1290,7 +1297,7 @@ function renderDeptTasks(el, code, viewRole){
           start_date: document.getElementById('new-task-start').value || null,
           due_date: document.getElementById('new-task-due').value || null,
           end_date: null,
-          status: 'Pending',
+          status: 'Not Done', // Default Status
           notes: '', 
           updated_by: currentUser.name,
           updated_at: new Date().toISOString()
@@ -1330,7 +1337,7 @@ function renderDeptTasks(el, code, viewRole){
 }
 
 function taskRowHtml(t, viewRole, deptUsers = []){
-  const statusClass = 'status-' + (t.status || 'Pending').replace(' ','-');
+  const statusClass = 'status-' + (t.status || 'Not Done').replace(/\s+/g, '-');
   const priClass = 'badge-' + (t.priority || 'Medium').toLowerCase();
 
   let cat = t.category || 'Delegated Task';
@@ -1391,6 +1398,11 @@ function taskRowHtml(t, viewRole, deptUsers = []){
         ${delegationDropdown}
         <div style="background:var(--ivory-100); padding:7px 12px; border-radius:6px; font-weight:700; font-size:12.5px; color:var(--emerald-800); border:1px solid var(--line);">🎯 Target: ${t.score || 0}</div>
         <input type="number" class="note-input" data-role="achieve-input" placeholder="Your Achievement..." value="${escapeAttr(achieveVal)}" style="width:160px;">
+        <select class="status-select ${statusClass}" data-role="status">
+          <option ${t.status==='Not Done' || t.status==='Pending' || !t.status ?'selected':''}>Not Done</option>
+          <option ${t.status==='Done'?'selected':''}>Done</option>
+          <option ${t.status==='On Leave'?'selected':''}>On Leave</option>
+        </select>
         <button class="btn btn-ghost btn-sm" data-role="save-target">Save</button>
         <button class="btn btn-danger btn-sm" data-role="delete" title="Remove task" ${deleteBtnStyle}>✕</button>
       `;
@@ -1398,7 +1410,11 @@ function taskRowHtml(t, viewRole, deptUsers = []){
       controlsHtml = `
         ${waBtnStyle}
         ${delegationDropdown}
-        <select class="status-select ${statusClass}" data-role="status"><option ${t.status==='Pending'?'selected':''}>Pending</option><option ${t.status==='In Progress'?'selected':''}>In Progress</option><option ${t.status==='Done'?'selected':''}>Done</option></select>
+        <select class="status-select ${statusClass}" data-role="status">
+          <option ${t.status==='Not Done' || t.status==='Pending' || !t.status ?'selected':''}>Not Done</option>
+          <option ${t.status==='Done'?'selected':''}>Done</option>
+          <option ${t.status==='On Leave'?'selected':''}>On Leave</option>
+        </select>
         <input type="text" class="note-input" data-role="notes" placeholder="Add a note..." value="${escapeAttr(t.notes||'')}">
         <button class="btn btn-ghost btn-sm" data-role="save">Save</button>
         <button class="btn btn-danger btn-sm" data-role="delete" title="Remove task" ${deleteBtnStyle}>✕</button>
@@ -1437,12 +1453,17 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers){
     const task = TASKS.find(t=>t.id == id);
     if(!task) return;
 
+    // --- STATUS COLOR UPDATE LISTENER ---
+    const select = row.querySelector('[data-role="status"]');
+    if (select) {
+        select.addEventListener('change', ()=>{ 
+            select.className = 'status-select status-' + select.value.replace(/\s+/g, '-'); 
+        });
+    }
+
     // --- STANDARD TASK SAVE LOGIC ---
     const saveBtn = row.querySelector('[data-role="save"]');
     if (saveBtn) {
-        const select = row.querySelector('[data-role="status"]');
-        select.addEventListener('change', ()=>{ select.className = 'status-select status-' + select.value.replace(' ','-'); });
-
         saveBtn.addEventListener('click', async ()=>{
           const newStatus = select.value;
           const newNotes = row.querySelector('[data-role="notes"]').value;
@@ -1458,8 +1479,12 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers){
             const targetScore = parseFloat(task.score) || 0;
             const achievedVal = parseFloat(achieveInput) || 0;
 
-            // Auto mark as done if target met
-            let newStatus = achievedVal >= targetScore && targetScore > 0 ? 'Done' : 'In Progress';
+            let newStatus = select.value;
+
+            // Auto mark as done if target met, unless they explicitly marked it On Leave
+            if ((newStatus === 'Not Done' || newStatus === 'Pending') && achievedVal >= targetScore && targetScore > 0) {
+                newStatus = 'Done';
+            }
 
             await processTaskUpdate(task, id, newStatus, achieveInput, row, deptUsers, code, viewRole);
         });
@@ -1490,10 +1515,14 @@ async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, 
     let newEndDate = task.end_date;
     let isNewlyCompleted = false;
 
-    if (newStatus === 'Done' && task.status !== 'Done') {
+    // Terminal statuses that trigger renewal (Done, On Leave)
+    let isTerminal = newStatus === 'Done' || newStatus === 'On Leave';
+    let wasTerminal = task.status === 'Done' || task.status === 'On Leave';
+
+    if (isTerminal && !wasTerminal) {
         newEndDate = new Date().toISOString().split('T')[0];
         isNewlyCompleted = true;
-    } else if (newStatus !== 'Done') {
+    } else if (!isTerminal) {
         newEndDate = null;
     }
 
@@ -1570,7 +1599,9 @@ async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, 
        updated_at: new Date().toISOString() 
     }).eq('id', id);
 
-    if(error){ alert('DATABASE ERROR updating task: ' + error.message); } 
+    if(error){ 
+        alert('DATABASE ERROR updating task: ' + error.message); 
+    } 
     else {
       task.status = newStatus; 
       task.notes = newNotes; 
@@ -1580,8 +1611,9 @@ async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, 
       task.updated_by = currentUser.name;
       
       // AUTO RENEWAL LOGIC
-      if (isNewlyCompleted && task.frequency && task.frequency !== 'One-Time') {
+      if (isNewlyCompleted && task.frequency && !task.frequency.startsWith('One-Time')) {
           const nextDue = getNextDueDate(task.frequency, task.due_date);
+          
           if (nextDue) {
               const clonedTask = {
                   department: task.department,
@@ -1589,12 +1621,12 @@ async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, 
                   category: task.category,
                   frequency: task.frequency,
                   priority: task.priority,
-                  score: task.category === 'Target / Metric' ? parseFloat(task.score) || 0 : 0,
-                  start_date: newEndDate, // new task starts today
-                  due_date: nextDue,
+                  score: task.score, // Keeps the target number
+                  start_date: newEndDate, // New task starts today
+                  due_date: nextDue, // Automatically calculated next date!
                   end_date: null,
-                  status: 'Pending',
-                  notes: '', 
+                  status: 'Not Done', // Fresh status
+                  notes: '', // Empties achievement notes
                   assigned_to: task.assigned_to,
                   mobile: task.mobile,
                   updated_by: currentUser.name,
@@ -1602,11 +1634,12 @@ async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, 
               };
 
               const { data: renewedTasks, error: renewErr } = await supabaseClient.from('tasks').insert([clonedTask]).select();
-              if (!renewErr && renewedTasks) {
+              
+              if (renewErr) {
+                  alert("RENEWAL DATABASE ERROR: " + renewErr.message);
+              } else if (renewedTasks) {
                   renewedTasks.forEach(d => TASKS.push(d));
-                  showToast(`Task Marked Done & Renewed for ${nextDue}!`);
-              } else {
-                  showToast('Task saved!');
+                  showToast(`Task saved & auto-renewed for ${nextDue}. Check the "Not Done" tab!`);
               }
           } else {
               showToast('Task saved!');
@@ -1736,7 +1769,7 @@ function check6PMRoutine() {
 
       const pendingDaily = TASKS.filter(t => 
         (t.category === 'Daily Task' || t.category === 'Check List') && 
-        t.status !== 'Done' && 
+        (t.status === 'Not Done' || t.status === 'Pending') && 
         t.mobile
       );
 
@@ -1747,7 +1780,7 @@ function check6PMRoutine() {
           btn.style.display = 'inline-flex';
           countSpan.innerText = autoRemindQueue.length;
           btn.className = 'btn btn-whatsapp-alert btn-sm';
-          showToast(`🔔 6 PM Alert: ${pendingDaily.length} Daily Tasks remain pending!`);
+          showToast(`🔔 6 PM Alert: ${pendingDaily.length} Daily Tasks remain Not Done!`);
       }
   }
 }
