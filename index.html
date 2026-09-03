@@ -998,13 +998,13 @@ function openEvalModal(empName) {
     let myTasks = TASKS.filter(t => t.assigned_to === empName && isActiveTask(t));
     
     // Completely ignore "On Leave" tasks from math to prevent penalties!
-    let targetTasks = myTasks.filter(t => t.category === 'Target / Metric' && t.status !== 'On Leave');
+    let targetTasks = myTasks.filter(t => t.category === 'Target' && t.status !== 'On Leave');
 
     let auto65 = 0;
     let methodText = "Auto-calculated (65%)";
     let titleText = "1. Target vs Achievement Metrics";
 
-    // SCENARIO 1: Employee has Target/Metric tasks assigned
+    // SCENARIO 1: Employee has Target tasks assigned
     if (targetTasks.length > 0) {
         let totalTarget = 0;
         let totalAchieve = 0;
@@ -1162,12 +1162,16 @@ function renderDeptTasks(el, code, viewRole){
 
   if (viewRole === 'employee') { list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); }
   
+  // Create a local date string for the Future Task filter
+  const dNow = new Date();
+  const localTodayStr = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
+
   if (taskFilter !== 'All') {
       list = list.filter(t => t.status === taskFilter || (taskFilter === 'Not Done' && (t.status === 'Pending' || !t.status)));
       
       // FIX: Hide future tasks from the "Not Done" list so they don't clutter the current day
       if (taskFilter === 'Not Done') {
-          list = list.filter(t => !t.start_date || t.start_date <= getLocalToday());
+          list = list.filter(t => !t.start_date || t.start_date <= localTodayStr);
       }
   }
 
@@ -1193,10 +1197,10 @@ function renderDeptTasks(el, code, viewRole){
         </div>
         <div class="row">
           <div><label>Category</label>
-            <select id="new-task-category" onchange="document.getElementById('target-box').style.display = this.value === 'Target / Metric' ? 'block' : 'none'">
+            <select id="new-task-category" onchange="document.getElementById('target-box').style.display = this.value === 'Target' ? 'block' : 'none'">
               <option value="Check List">Check List</option>
               <option value="Delegated Task" selected>Delegated Task</option>
-              <option value="Target / Metric">Target / Metric (Numeric Goal)</option>
+              <option value="Target">Target</option>
             </select>
           </div>
           <div><label>Assign To</label>
@@ -1292,7 +1296,7 @@ function renderDeptTasks(el, code, viewRole){
 
         const catValue = document.getElementById('new-task-category').value;
         const assigned_val = document.getElementById('new-task-assign').value;
-        const targetVal = catValue === 'Target / Metric' ? parseFloat(document.getElementById('new-task-target').value || 0) : 0;
+        const targetVal = catValue === 'Target' ? parseFloat(document.getElementById('new-task-target').value || 0) : 0;
 
         let freqValue = document.getElementById('new-task-frequency').value;
         if (freqValue === 'Weekly') {
@@ -1363,7 +1367,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
 
   let catClass = 'badge-delegated';
   if (cat === 'Check List') catClass = 'badge-checklist';
-  if (cat === 'Target / Metric') catClass = 'badge-metric';
+  if (cat === 'Target') catClass = 'badge-metric';
 
   const todayStr = new Date().toISOString().split('T')[0];
   let delayBadge = '';
@@ -1409,7 +1413,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
   // DYNAMIC CONTROLS BASED ON CATEGORY
   let controlsHtml = '';
 
-  if (cat === 'Target / Metric') {
+  if (cat === 'Target') {
       let achieveVal = t.notes || '';
       controlsHtml = `
         ${waBtnStyle}
