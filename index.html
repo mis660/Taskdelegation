@@ -1148,8 +1148,17 @@ function renderDeptTasks(el, code, viewRole){
 
   if (viewRole === 'employee') { list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); }
   
+  // Create a local date string for the Future Task filter
+  const dNow = new Date();
+  const localTodayStr = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
+
   if (taskFilter !== 'All') {
-      list = list.filter(t => t.status === taskFilter || (taskFilter === 'Not Done' && t.status === 'Pending'));
+      list = list.filter(t => t.status === taskFilter || (taskFilter === 'Not Done' && (t.status === 'Pending' || !t.status)));
+      
+      // FIX: Hide future tasks from the "Not Done" list so they don't clutter the current day
+      if (taskFilter === 'Not Done') {
+          list = list.filter(t => !t.start_date || t.start_date <= localTodayStr);
+      }
   }
 
   // Retrieve employees in this department for the Assign dropdowns
@@ -1622,7 +1631,7 @@ async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, 
                   frequency: task.frequency,
                   priority: task.priority,
                   score: task.score, // Keeps the target number
-                  start_date: newEndDate, // New task starts today
+                  start_date: nextDue, // New task starts today
                   due_date: nextDue, // Automatically calculated next date!
                   end_date: null,
                   status: 'Not Done', // Fresh status
