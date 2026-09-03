@@ -1149,7 +1149,6 @@ function renderDeptTasks(el, code, viewRole){
   if (viewRole === 'employee') { list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); }
   
   if (taskFilter !== 'All') {
-      // Show old "Pending" tasks under the new "Not Done" filter
       list = list.filter(t => t.status === taskFilter || (taskFilter === 'Not Done' && t.status === 'Pending'));
   }
 
@@ -1365,7 +1364,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
           dueBadgeClass = 'badge-overdue';
           if (t.status === 'Done' && t.end_date) {
               delayBadge = `<span class="badge-overdue" style="margin-left:6px;">Delayed by ${diffDays} day(s)</span>`;
-          } else if (t.status !== 'Done') {
+          } else if (t.status !== 'Done' && t.status !== 'On Leave') {
               delayBadge = `<span class="badge-overdue" style="margin-left:6px;">Overdue by ${diffDays} day(s)</span>`;
           }
       }
@@ -1515,7 +1514,8 @@ async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, 
     let newEndDate = task.end_date;
     let isNewlyCompleted = false;
 
-    // Terminal statuses that trigger renewal (Done, On Leave)
+    // FIX: Only "Done" and "On Leave" are finished states that trigger renewal.
+    // "Not Done" is the default waiting state, so it does not trigger renewal until changed.
     let isTerminal = newStatus === 'Done' || newStatus === 'On Leave';
     let wasTerminal = task.status === 'Done' || task.status === 'On Leave';
 
