@@ -1169,12 +1169,13 @@ function renderDeptTasks(el, code, viewRole){
 
   if (viewRole === 'employee') { list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); }
   
+  const localTodayStr = getLocalToday();
+
   if (taskFilter !== 'All') {
       list = list.filter(t => t.status === taskFilter || (taskFilter === 'Not Done' && (t.status === 'Pending' || !t.status)));
       
-      // FIX: Hide future tasks from the "Not Done" list so they don't clutter the current day
       if (taskFilter === 'Not Done') {
-          list = list.filter(t => !t.start_date || t.start_date <= getLocalToday());
+          list = list.filter(t => !t.start_date || t.start_date <= localTodayStr);
       }
   }
 
@@ -1265,7 +1266,8 @@ function renderDeptTasks(el, code, viewRole){
       <div style="display:flex; gap:8px;">
         ${['All','Not Done','Done','On Leave'].map(f=>`<div class="chip ${taskFilter===f?'active':''}" data-f="${f}">${f}</div>`).join('')}
       </div>
-      <div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button id="save-all-btn" class="btn btn-primary btn-sm" style="font-size:13.5px; padding:9px 16px;">💾 Save All</button>
         <input type="text" id="task-list-search" placeholder="Search tasks or employees..." style="padding:9px 14px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; min-width:260px;">
       </div>
     </div>
@@ -1279,7 +1281,7 @@ function renderDeptTasks(el, code, viewRole){
   
   el.querySelectorAll('.chip').forEach(c=>{ c.addEventListener('click', ()=>{ taskFilter = c.dataset.f; renderDeptTasks(el, safeCode, viewRole); }); });
   
-  // NEW: Live search logic for tasks
+  // Live search logic for tasks
   const taskSearch = el.querySelector('#task-list-search');
   if(taskSearch) {
     taskSearch.addEventListener('input', (e) => {
@@ -1291,6 +1293,14 @@ function renderDeptTasks(el, code, viewRole){
   }
 
   wireTaskRowEvents(el, safeCode, viewRole, deptUsers);
+
+  // Bulk Save Handler
+  const saveAllBtn = document.getElementById('save-all-btn');
+  if(saveAllBtn) {
+      saveAllBtn.addEventListener('click', async () => {
+          await processBulkUpdate(el, safeCode, viewRole, deptUsers);
+      });
+  }
 
   if(document.getElementById('add-task-btn')){
       document.getElementById('add-task-btn').addEventListener('click', async ()=>{
@@ -1406,7 +1416,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
   const employeeAssignedBadge = (viewRole === 'employee' && t.assigned_to) ? `<span class="assigned-badge">${escapeHtml(t.assigned_to)}</span>` : '';
 
   const delegationDropdown = (viewRole !== 'employee') ? `
-    <select class="assign-select" data-role="assign">
+    <select class="assign-select" data-role="assign" style="margin-right:8px;">
       <option value="">-- Unassigned --</option>
       <option value="DISTRIBUTE_ALL" style="font-weight:bold; color:var(--emerald-700);">➔ Distribute to ALL in Dept</option>
       ${deptUsers.map(u => `<option value="${escapeAttr(u.name)}" ${t.assigned_to === u.name ? 'selected' : ''}>👤 ${escapeHtml(u.name)}</option>`).join('')}
@@ -1428,7 +1438,6 @@ function taskRowHtml(t, viewRole, deptUsers = []){
           <option ${t.status==='Done'?'selected':''}>Done</option>
           <option ${t.status==='On Leave'?'selected':''}>On Leave</option>
         </select>
-        <button class="btn btn-ghost btn-sm" data-role="save-target">Save</button>
         <button class="btn btn-danger btn-sm" data-role="delete" title="Remove task" ${deleteBtnStyle}>✕</button>
       `;
   } else {
@@ -1441,7 +1450,6 @@ function taskRowHtml(t, viewRole, deptUsers = []){
           <option ${t.status==='On Leave'?'selected':''}>On Leave</option>
         </select>
         <input type="text" class="note-input" data-role="notes" placeholder="Add a note..." value="${escapeAttr(t.notes||'')}">
-        <button class="btn btn-ghost btn-sm" data-role="save">Save</button>
         <button class="btn btn-danger btn-sm" data-role="delete" title="Remove task" ${deleteBtnStyle}>✕</button>
       `;
   }
@@ -1486,32 +1494,18 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers){
         });
     }
 
-    // --- STANDARD TASK SAVE LOGIC ---
-    const saveBtn = row.querySelector('[data-role="save"]');
-    if (saveBtn) {
-        saveBtn.addEventListener('click', async ()=>{
-          const newStatus = select.value;
-          const newNotes = row.querySelector('[data-role="notes"]').value;
-          await processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, code, viewRole);
-        });
-    }
-
-    // --- TARGET/METRIC TASK SAVE LOGIC ---
-    const saveTargetBtn = row.querySelector('[data-role="save-target"]');
-    if (saveTargetBtn) {
-        saveTargetBtn.addEventListener('click', async ()=>{
-            const achieveInput = row.querySelector('[data-role="achieve-input"]').value;
-            const targetScore = parseFloat(task.score) || 0;
-            const achievedVal = parseFloat(achieveInput) || 0;
-
-            let newStatus = select.value;
-
-            // Auto mark as done if target met, unless they explicitly marked it On Leave
-            if ((newStatus === 'Not Done' || newStatus === 'Pending') && achievedVal >= targetScore && targetScore > 0) {
-                newStatus = 'Done';
-            }
-
-            await processTaskUpdate(task, id, newStatus, achieveInput, row, deptUsers, code, viewRole);
+    // --- INLINE DISTRIBUTE ALL LOGIC (Admins/HODs) ---
+    const assignSelect = row.querySelector('[data-role="assign"]');
+    if (assignSelect) {
+        assignSelect.addEventListener('change', async () => {
+             if (assignSelect.value === 'DISTRIBUTE_ALL') {
+                 if (deptUsers.length === 0) { showToast('No users available'); assignSelect.value = task.assigned_to || ''; return; }
+                 if (!confirm('This will create a copy of this task for every employee in the department immediately. Continue?')) {
+                     assignSelect.value = task.assigned_to || ''; 
+                     return;
+                 }
+                 await executeDistributeAll(task, id, deptUsers, code, viewRole);
+             }
         });
     }
 
@@ -1535,148 +1529,184 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers){
   });
 }
 
-// Helper to handle the database save to avoid repeating code
-async function processTaskUpdate(task, id, newStatus, newNotes, row, deptUsers, code, viewRole) {
-    let newEndDate = task.end_date;
-    let isNewlyCompleted = false;
+// Handles immediate "Distribute All" clone action from the dropdown
+async function executeDistributeAll(task, id, deptUsers, code, viewRole) {
+    let firstUser = deptUsers[0]; 
+    let clonedTasks = [];
 
-    // FIX: Only "Done" and "On Leave" are finished states that trigger renewal.
-    // "Not Done" is the default waiting state, so it does not trigger renewal until changed.
-    let isTerminal = newStatus === 'Done' || newStatus === 'On Leave';
-    let wasTerminal = task.status === 'Done' || task.status === 'On Leave';
-
-    if (isTerminal && !wasTerminal) {
-        newEndDate = new Date().toISOString().split('T')[0];
-        isNewlyCompleted = true;
-    } else if (!isTerminal) {
-        newEndDate = null;
+    for(let i = 1; i < deptUsers.length; i++){
+        clonedTasks.push({
+            department: task.department,
+            text: task.text,
+            category: task.category,
+            frequency: task.frequency,
+            priority: task.priority,
+            score: task.score,
+            start_date: task.start_date,
+            due_date: task.due_date,
+            end_date: task.end_date,
+            status: task.status,
+            notes: task.notes,
+            assigned_to: deptUsers[i].name,
+            mobile: deptUsers[i].mobile || null,
+            updated_by: currentUser.name,
+            updated_at: new Date().toISOString()
+        });
     }
 
-    // Inline Assignment Logic for HODs and Admins
-    const assignSelect = row.querySelector('[data-role="assign"]');
-    let newAssignedTo = task.assigned_to;
-    let newMobile = task.mobile;
+    await supabaseClient.from('tasks').update({ 
+         assigned_to: firstUser.name, 
+         mobile: firstUser.mobile || null, 
+         updated_by: currentUser.name, 
+         updated_at: new Date().toISOString() 
+    }).eq('id', id);
 
-    if (assignSelect) {
-        // Distribute All inline
-        if (assignSelect.value === 'DISTRIBUTE_ALL') {
-            if (deptUsers.length === 0) { showToast('No users available'); return; }
-            if (!confirm('This will create a copy of this task for every employee in the department. Continue?')) {
-                assignSelect.value = task.assigned_to || ''; // reset if cancelled
-                return;
+    if (clonedTasks.length > 0) {
+        const { data } = await supabaseClient.from('tasks').insert(clonedTasks).select();
+        if(data) data.forEach(d => TASKS.push(d));
+    }
+
+    task.assigned_to = firstUser.name; 
+    task.mobile = firstUser.mobile;
+    showToast('Distributed to ALL employees!');
+    renderDeptTasks(document.getElementById('content'), code, viewRole);
+}
+
+// BULK UPDATE FUNCTION (Fired by "Save All" button)
+async function processBulkUpdate(el, code, viewRole, deptUsers) {
+    const rows = el.querySelectorAll('.task-row');
+    let updates = [];
+    let renewals = [];
+    let hasChanges = false;
+
+    // 1. Gather all modifications from the DOM
+    for (let row of rows) {
+        const id = row.dataset.id;
+        const task = TASKS.find(t => t.id == id);
+        if (!task) continue;
+
+        const statusEl = row.querySelector('[data-role="status"]');
+        const notesEl = row.querySelector('[data-role="notes"]');
+        const achieveEl = row.querySelector('[data-role="achieve-input"]');
+        const assignEl = row.querySelector('[data-role="assign"]');
+
+        let newStatus = statusEl ? statusEl.value : task.status;
+        let newNotes = task.notes || '';
+        
+        if (task.category === 'Target') {
+            let achievedVal = achieveEl ? parseFloat(achieveEl.value) || 0 : 0;
+            newNotes = achieveEl ? achieveEl.value : (task.notes || '');
+            let targetScore = parseFloat(task.score) || 0;
+            
+            // Auto mark done if target met and not explicitly forced to something else
+            if ((newStatus === 'Not Done' || newStatus === 'Pending') && achievedVal >= targetScore && targetScore > 0) {
+                newStatus = 'Done';
+            }
+        } else {
+            newNotes = notesEl ? notesEl.value : (task.notes || '');
+        }
+
+        let newAssignedTo = task.assigned_to;
+        let newMobile = task.mobile;
+
+        // Skip DISTRIBUTE_ALL here as it is handled immediately via dropdown change event
+        if (assignEl && assignEl.value !== 'DISTRIBUTE_ALL') {
+             newAssignedTo = assignEl.value || null;
+             if(newAssignedTo) {
+                 const assignedUser = USERS.find(u => u.name === newAssignedTo);
+                 newMobile = assignedUser ? assignedUser.mobile : null;
+             } else {
+                 newMobile = null;
+             }
+        }
+
+        // 2. Check if this specific task was actually changed
+        if (newStatus !== task.status || newNotes !== (task.notes || '') || newAssignedTo !== task.assigned_to) {
+            hasChanges = true;
+            
+            let newEndDate = task.end_date;
+            let isNewlyCompleted = false;
+
+            let isTerminal = newStatus === 'Done' || newStatus === 'On Leave';
+            let wasTerminal = task.status === 'Done' || task.status === 'On Leave';
+
+            if (isTerminal && !wasTerminal) {
+                newEndDate = new Date().toISOString().split('T')[0];
+                isNewlyCompleted = true;
+            } else if (!isTerminal) {
+                newEndDate = null;
             }
 
-            let firstUser = deptUsers[0]; 
-            let clonedTasks = [];
+            // Create the full updated object for Supabase upsert
+            updates.push({
+                ...task,
+                status: newStatus,
+                notes: newNotes,
+                end_date: newEndDate,
+                assigned_to: newAssignedTo,
+                mobile: newMobile,
+                updated_by: currentUser.name,
+                updated_at: new Date().toISOString()
+            });
 
-            for(let i = 1; i < deptUsers.length; i++){
-                clonedTasks.push({
-                    department: task.department,
-                    text: task.text,
-                    category: task.category,
-                    frequency: task.frequency,
-                    priority: task.priority,
-                    score: task.score,
-                    start_date: task.start_date,
-                    due_date: task.due_date,
-                    end_date: newEndDate,
-                    status: newStatus,
-                    notes: newNotes,
-                    assigned_to: deptUsers[i].name,
-                    mobile: deptUsers[i].mobile || null,
-                    updated_by: currentUser.name,
-                    updated_at: new Date().toISOString()
-                });
-            }
-
-            await supabaseClient.from('tasks').update({ 
-                 status: newStatus, notes: newNotes, end_date: newEndDate, assigned_to: firstUser.name, mobile: firstUser.mobile || null, updated_by: currentUser.name, updated_at: new Date().toISOString() 
-            }).eq('id', id);
-
-            if (clonedTasks.length > 0) {
-                const { data } = await supabaseClient.from('tasks').insert(clonedTasks).select();
-                if(data) data.forEach(d => TASKS.push(d));
-            }
-
-            task.status = newStatus; task.notes = newNotes; task.end_date = newEndDate; task.assigned_to = firstUser.name; task.mobile = firstUser.mobile;
-            showToast('Distributed to ALL employees!');
-            renderDeptTasks(document.getElementById('content'), code, viewRole);
-            return; 
-        } 
-        else {
-            newAssignedTo = assignSelect.value;
-            if (newAssignedTo) {
-                const assignedUser = USERS.find(u => u.name === newAssignedTo);
-                newMobile = assignedUser ? assignedUser.mobile : null;
-            } else {
-                newAssignedTo = null;
-                newMobile = null;
+            // 3. Prepare Auto-Renewal if it was newly completed
+            if (isNewlyCompleted && task.frequency && !task.frequency.startsWith('One-Time')) {
+                const nextDue = getNextDueDate(task.frequency, task.due_date);
+                if (nextDue) {
+                    renewals.push({
+                        department: task.department,
+                        text: task.text,
+                        category: task.category,
+                        frequency: task.frequency,
+                        priority: task.priority,
+                        score: task.score,
+                        start_date: nextDue, 
+                        due_date: nextDue,
+                        end_date: null,
+                        status: 'Not Done',
+                        notes: '', 
+                        assigned_to: newAssignedTo,
+                        mobile: newMobile,
+                        updated_by: currentUser.name,
+                        updated_at: new Date().toISOString()
+                    });
+                }
             }
         }
     }
 
-    const { error } = await supabaseClient.from('tasks').update({ 
-       status: newStatus, 
-       notes: newNotes, 
-       end_date: newEndDate,
-       assigned_to: newAssignedTo,
-       mobile: newMobile,
-       updated_by: currentUser.name, 
-       updated_at: new Date().toISOString() 
-    }).eq('id', id);
-
-    if(error){ 
-        alert('DATABASE ERROR updating task: ' + error.message); 
-    } 
-    else {
-      task.status = newStatus; 
-      task.notes = newNotes; 
-      task.end_date = newEndDate;
-      task.assigned_to = newAssignedTo;
-      task.mobile = newMobile;
-      task.updated_by = currentUser.name;
-      
-      // AUTO RENEWAL LOGIC
-      if (isNewlyCompleted && task.frequency && !task.frequency.startsWith('One-Time')) {
-          const nextDue = getNextDueDate(task.frequency, task.due_date);
-          
-          if (nextDue) {
-              const clonedTask = {
-                  department: task.department,
-                  text: task.text,
-                  category: task.category,
-                  frequency: task.frequency,
-                  priority: task.priority,
-                  score: task.score, // Keeps the target number
-                  start_date: nextDue, // New task starts on its due date so it stays hidden till then
-                  due_date: nextDue, // Automatically calculated next date!
-                  end_date: null,
-                  status: 'Not Done', // Fresh status
-                  notes: '', // Empties achievement notes
-                  assigned_to: task.assigned_to,
-                  mobile: task.mobile,
-                  updated_by: currentUser.name,
-                  updated_at: new Date().toISOString()
-              };
-
-              const { data: renewedTasks, error: renewErr } = await supabaseClient.from('tasks').insert([clonedTask]).select();
-              
-              if (renewErr) {
-                  alert("RENEWAL DATABASE ERROR: " + renewErr.message);
-              } else if (renewedTasks) {
-                  renewedTasks.forEach(d => TASKS.push(d));
-                  showToast(`Task saved! Renewed task for ${nextDue} will stay hidden until then.`);
-              }
-          } else {
-              showToast('Task saved!');
-          }
-      } else {
-          showToast('Task saved!');
-      }
-
-      checkDueTasksQueue(); 
-      renderDeptTasks(document.getElementById('content'), code, viewRole);
+    if (!hasChanges) {
+        showToast('No changes detected.');
+        return;
     }
+
+    showToast('Saving all changes...');
+    document.getElementById('save-all-btn').disabled = true;
+    document.getElementById('save-all-btn').innerText = 'Saving...';
+
+    // 4. Send bulk update to Supabase
+    if (updates.length > 0) {
+        const { error: upErr } = await supabaseClient.from('tasks').upsert(updates);
+        if (upErr) {
+            alert("DATABASE ERROR saving updates: " + upErr.message);
+            document.getElementById('save-all-btn').disabled = false;
+            document.getElementById('save-all-btn').innerText = '💾 Save All';
+            return;
+        }
+    }
+
+    // 5. Send bulk renewals to Supabase
+    if (renewals.length > 0) {
+        const { error: renErr } = await supabaseClient.from('tasks').insert(renewals);
+        if (renErr) {
+            alert("DATABASE ERROR creating renewals: " + renErr.message);
+        }
+    }
+
+    showToast('All tasks updated successfully!');
+    checkDueTasksQueue(); 
+    await loadData(); 
+    renderDeptTasks(document.getElementById('content'), code, viewRole);
 }
 
 /* ---------------- ADMIN CONTROL (DEPARTMENTS & USERS) ---------------- */
