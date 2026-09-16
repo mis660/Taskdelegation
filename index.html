@@ -149,7 +149,6 @@
   .task-row .controls{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;}
   .status-select{ width:auto; min-width:130px; padding:8px 10px; font-size:13px; font-weight:600; border-radius:7px; }
   .status-Not-Done, .status-Pending{ background:var(--clay-100); color:var(--clay-600); border-color:rgba(181,80,45,.3); }
-  .status-In-Progress{ background:var(--gold-100); color:var(--gold-600); border-color:rgba(201,162,39,.35);}
   .status-Done{ background:var(--emerald-100); color:var(--emerald-700); border-color:rgba(28,122,87,.3);}
   .status-On-Leave{ background:#f1f5f9; color:#475569; border-color:#cbd5e1; }
   
@@ -776,11 +775,9 @@ function renderDeptTasks(el, code, viewRole){
     list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); 
   }
 
-  // Get current day of the week for frequency matching (e.g., "Wednesday")
   const dateObj = new Date(selectedLogDate + 'T00:00:00');
   const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
 
-  // Map each master task with its specific status & notes from task_logs for selectedLogDate
   let taskDisplayList = list.map(t => {
     const logEntry = TASK_LOGS.find(l => String(l.task_id) === String(t.id));
     return {
@@ -790,7 +787,6 @@ function renderDeptTasks(el, code, viewRole){
     };
   });
 
-  // Filter by search term
   if (taskSearchTerm) {
     const term = taskSearchTerm.toLowerCase();
     taskDisplayList = taskDisplayList.filter(t => 
@@ -798,7 +794,6 @@ function renderDeptTasks(el, code, viewRole){
     );
   }
 
-  // Filter by status chip
   if (taskFilter !== 'All') {
     if (taskFilter === 'Not Done') {
       taskDisplayList = taskDisplayList.filter(t => t.currentStatus === 'Not Done' || t.currentStatus === 'Pending');
@@ -814,7 +809,6 @@ function renderDeptTasks(el, code, viewRole){
     return uDept === cDept || u.department === currentDept.name;
   });
 
-  // Date Bar Controls
   const isToday = selectedLogDate === getTodayStr();
   const isYesterday = selectedLogDate === getYesterdayStr();
   
@@ -895,7 +889,6 @@ function renderDeptTasks(el, code, viewRole){
     ${addTaskHtml}
   `;
 
-  // Attach Navigation & Search Handlers
   document.getElementById('quick-today-btn').addEventListener('click', async () => {
     selectedLogDate = getTodayStr();
     await loadDailyLogs(selectedLogDate);
@@ -929,14 +922,12 @@ function renderDeptTasks(el, code, viewRole){
     c.addEventListener('click', ()=>{ taskFilter = c.dataset.f; renderDeptTasks(el, code, viewRole); }); 
   });
 
-  // Save All button handler
   document.getElementById('save-all-btn').addEventListener('click', async () => {
     await saveAllTasksForDay(el, code, viewRole);
   });
 
   wireTaskRowEvents(el, code, viewRole, deptUsers);
 
-  // Admin Add Task Listener
   if(document.getElementById('add-task-btn')){
       document.getElementById('add-task-btn').addEventListener('click', async ()=>{
         const txt = document.getElementById('new-task-text').value.trim();
@@ -1060,7 +1051,6 @@ function taskRowHtml(t, viewRole, deptUsers = []){
         <select class="status-select ${statusClass}" data-role="status">
           <option value="Not Done" ${currentStatus==='Not Done' || currentStatus==='Pending' ? 'selected':''}>Not Done</option>
           <option value="Done" ${currentStatus==='Done'?'selected':''}>Done</option>
-          <option value="In Progress" ${currentStatus==='In Progress'?'selected':''}>In Progress</option>
           <option value="On Leave" ${currentStatus==='On Leave'?'selected':''}>On Leave</option>
         </select>
         <input type="text" class="note-input" data-role="notes" placeholder="Add a note..." value="${escapeAttr(t.currentNotes || '')}">
@@ -1119,7 +1109,7 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers){
           newNotes = achieveInput ? achieveInput.value : '';
           const targetScore = parseFloat(task.score) || 0;
           const achievedVal = parseFloat(newNotes) || 0;
-          newStatus = achievedVal >= targetScore && targetScore > 0 ? 'Done' : 'In Progress';
+          newStatus = achievedVal >= targetScore && targetScore > 0 ? 'Done' : 'Not Done';
         } else {
           const noteInput = row.querySelector('[data-role="notes"]');
           newNotes = noteInput ? noteInput.value : '';
@@ -1152,13 +1142,11 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers){
 
 // Single task date-wise log upsert
 async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers) {
-  // Check for inline delegation change
   const assignSelect = row.querySelector('[data-role="assign"]');
   let currentAssignee = task.assigned_to;
   
   if (assignSelect && assignSelect.value && assignSelect.value !== 'DISTRIBUTE_ALL') {
     currentAssignee = assignSelect.value;
-    // update master task assignment if changed
     if (currentAssignee !== task.assigned_to) {
       const assignedUser = USERS.find(u => u.name === currentAssignee);
       await supabaseClient.from('tasks').update({
@@ -1181,14 +1169,12 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers) {
     updated_at: new Date().toISOString()
   };
 
-  // Upsert into task_logs on (task_id, log_date)
   const { error } = await supabaseClient
     .from('task_logs')
     .upsert(logPayload, { onConflict: 'task_id, log_date' });
 
   if (error) {
     console.error("Error saving log, falling back to master table:", error);
-    // Fallback updates master tasks table if task_logs is not yet created
     await supabaseClient.from('tasks').update({
       status: newStatus,
       notes: newNotes,
@@ -1219,7 +1205,7 @@ async function saveAllTasksForDay(el, code, viewRole) {
       newNotes = achieveInput ? achieveInput.value : '';
       const targetScore = parseFloat(task.score) || 0;
       const achievedVal = parseFloat(newNotes) || 0;
-      newStatus = achievedVal >= targetScore && targetScore > 0 ? 'Done' : 'In Progress';
+      newStatus = achievedVal >= targetScore && targetScore > 0 ? 'Done' : 'Not Done';
     } else {
       const noteInput = row.querySelector('[data-role="notes"]');
       newNotes = noteInput ? noteInput.value : '';
