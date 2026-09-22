@@ -331,12 +331,6 @@ let selectedLogDate = new Date().toLocaleDateString('en-CA');
 window.scoreboardDeptFilters = window.scoreboardDeptFilters || [];
 let currentEvalEmp = '';
 
-function getYesterdayStr() {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return d.toLocaleDateString('en-CA');
-}
-
 function getTodayStr() {
   return new Date().toLocaleDateString('en-CA');
 }
@@ -807,7 +801,6 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
   const dateObj = new Date(selectedLogDate + 'T00:00:00');
   const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
   const isToday = selectedLogDate === getTodayStr();
-  const isYesterday = selectedLogDate === getYesterdayStr();
 
   // Explicit Historical Status Logging Control
   let taskDisplayList = list.map(t => {
@@ -858,9 +851,7 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
   const dateBarHtml = `
     <div class="date-bar">
       <div class="date-bar-left">
-        <span style="font-size:12px; font-weight:700; color:var(--ink-500); text-transform:uppercase;">📅 Active Date:</span>
-        <button class="btn btn-sm ${isToday ? 'btn-gold' : 'btn-ghost'}" id="quick-today-btn">Today</button>
-        <button class="btn btn-sm ${isYesterday ? 'btn-gold' : 'btn-ghost'}" id="quick-yesterday-btn">Yesterday</button>
+        <span style="font-size:12px; font-weight:700; color:var(--ink-500); text-transform:uppercase;">📅 Date:</span>
         <input type="date" class="date-input-field" id="date-picker-input" value="${selectedLogDate}">
         <span class="date-badge">${dayName}, ${selectedLogDate}</span>
       </div>
@@ -873,7 +864,6 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
 
   let addTaskHtml = '';
   if(viewRole === 'admin') {
-      // Changed standard select to Searchable Datalist Input
       addTaskHtml = `
       <div class="add-task-box">
         <h4 style="margin:0 0 10px; color:var(--emerald-900); font-family:'Inter'; font-weight:700;">Assign a New Task</h4>
@@ -935,18 +925,6 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
 
     ${addTaskHtml}
   `;
-
-  document.getElementById('quick-today-btn').addEventListener('click', async () => {
-    selectedLogDate = getTodayStr();
-    await loadDailyLogs(selectedLogDate);
-    renderDeptTasks(el, code, viewRole, subType);
-  });
-
-  document.getElementById('quick-yesterday-btn').addEventListener('click', async () => {
-    selectedLogDate = getYesterdayStr();
-    await loadDailyLogs(selectedLogDate);
-    renderDeptTasks(el, code, viewRole, subType);
-  });
 
   document.getElementById('date-picker-input').addEventListener('change', async (e) => {
     if (e.target.value) {
@@ -1075,29 +1053,45 @@ function taskRowHtml(t, viewRole, deptUsers = []){
 
   let statusOptions = '';
   if (viewRole === 'employee') {
-      // Employees send for review, they don't mark completely Done unless previously approved.
-      if (currentStatus === 'Done') {
-          statusOptions = `<option value="Done" selected disabled>Done (Approved)</option>`;
-      } else {
+      if (cat === 'Check List') {
           statusOptions = `
-            <option value="Not Done" ${currentStatus==='Not Done'?'selected':''}>Not Done</option>
-            <option value="Pending Review" ${currentStatus==='Pending Review'?'selected':''}>Send for Review</option>
+            <option value="Not Done" ${currentStatus==='Not Done' || currentStatus==='Pending' ? 'selected':''}>Not Done</option>
+            <option value="Done" ${currentStatus==='Done'?'selected':''}>Done</option>
             <option value="On Leave" ${currentStatus==='On Leave'?'selected':''}>On Leave</option>
           `;
+      } else {
+          // Delegated Task Workflow
+          if (currentStatus === 'Done') {
+              statusOptions = `<option value="Done" selected disabled>Done (Approved)</option>`;
+          } else {
+              statusOptions = `
+                <option value="Not Done" ${currentStatus==='Not Done'?'selected':''}>Not Done</option>
+                <option value="Pending Review" ${currentStatus==='Pending Review'?'selected':''}>Send for Review</option>
+                <option value="On Leave" ${currentStatus==='On Leave'?'selected':''}>On Leave</option>
+              `;
+          }
       }
   } else {
       // Admins/HODs see the full workflow
-      statusOptions = `
-        <option value="Not Done" ${currentStatus==='Not Done' || currentStatus==='Pending' ? 'selected':''}>Not Done</option>
-        <option value="Pending Review" ${currentStatus==='Pending Review'?'selected':''}>Pending Review</option>
-        <option value="Done" ${currentStatus==='Done'?'selected':''}>Done (Approved)</option>
-        <option value="On Leave" ${currentStatus==='On Leave'?'selected':''}>On Leave</option>
-      `;
+      if (cat === 'Check List') {
+          statusOptions = `
+            <option value="Not Done" ${currentStatus==='Not Done' || currentStatus==='Pending' ? 'selected':''}>Not Done</option>
+            <option value="Done" ${currentStatus==='Done'?'selected':''}>Done</option>
+            <option value="On Leave" ${currentStatus==='On Leave'?'selected':''}>On Leave</option>
+          `;
+      } else {
+          statusOptions = `
+            <option value="Not Done" ${currentStatus==='Not Done' || currentStatus==='Pending' ? 'selected':''}>Not Done</option>
+            <option value="Pending Review" ${currentStatus==='Pending Review'?'selected':''}>Pending Review</option>
+            <option value="Done" ${currentStatus==='Done'?'selected':''}>Done (Approved)</option>
+            <option value="On Leave" ${currentStatus==='On Leave'?'selected':''}>On Leave</option>
+          `;
+      }
   }
 
   let controlsHtml = '';
-  // If the task is definitively Done and viewed by an employee, lock down inputs
-  const isEmployeeLocked = (currentStatus === 'Done' && viewRole === 'employee');
+  // Only lock inputs if it's an approved delegated task. Checklists remain editable.
+  const isEmployeeLocked = (currentStatus === 'Done' && viewRole === 'employee' && cat !== 'Check List');
   const disabledAttr = isEmployeeLocked ? 'disabled style="background:#f1f5f9; cursor:not-allowed;"' : '';
   const saveBtnDisplay = isEmployeeLocked ? 'style="display:none;"' : '';
   
@@ -1130,7 +1124,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
         ${t.frequency ? `<span class="badge-frequency">🔁 ${t.frequency}</span>` : ''}
         <span class="badge-priority ${priClass}">${t.priority || 'Medium'}</span>
         ${t.due_date ? `<span class="${dueBadgeClass}">${dueText}</span>${delayBadge}` : ''}
-        ${currentStatus === 'Done' ? `<span class="badge-checklist" style="background:#dcfce7; color:#16a34a; border-color:#bbf7d0;">✔ Approved for ${selectedLogDate}</span>` : ''}
+        ${currentStatus === 'Done' ? `<span class="badge-checklist" style="background:#dcfce7; color:#16a34a; border-color:#bbf7d0;">✔ ${cat === 'Check List' ? 'Done' : 'Approved'} for${selectedLogDate}</span>` : ''}
       </div>
       <div class="meta">
         ${employeeAssignedBadge}
