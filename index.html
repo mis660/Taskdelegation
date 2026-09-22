@@ -149,6 +149,7 @@
   .task-row .controls{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;}
   .status-select{ width:auto; min-width:130px; padding:8px 10px; font-size:13px; font-weight:600; border-radius:7px; }
   .status-Not-Done, .status-Pending{ background:var(--clay-100); color:var(--clay-600); border-color:rgba(181,80,45,.3); }
+  .status-Pending-Review { background:var(--gold-100); color:var(--gold-600); border-color:rgba(201,162,39,0.3); }
   .status-Done{ background:var(--emerald-100); color:var(--emerald-700); border-color:rgba(28,122,87,.3);}
   .status-On-Leave{ background:#f1f5f9; color:#475569; border-color:#cbd5e1; }
   
@@ -251,7 +252,7 @@
   <div class="content" id="content"></div>
 </div>
 
-<!-- EVALUATION MODAL (65% TARGET / 35% MANAGER EVAL) -->
+<!-- EVALUATION MODAL -->
 <div class="modal-overlay" id="eval-modal">
   <div class="modal-content">
     <div class="modal-head">
@@ -392,7 +393,7 @@ function showToast(msg){
 }
 
 // ==========================================
-// SMART REMINDER QUEUE
+// BULK WHATSAPP REMINDER (Groups by User)
 // ==========================================
 function checkDueTasksQueue() {
   if (!currentUser || currentUser.role !== 'admin') {
@@ -403,7 +404,7 @@ function checkDueTasksQueue() {
   const today = getTodayStr();
   
   autoRemindQueue = TASKS.filter(t => 
-    t.status !== 'Done' && t.mobile && t.due_date && t.due_date <= today
+    t.status !== 'Done' && t.status !== 'Pending Review' && t.mobile && t.due_date && t.due_date <= today
   );
   
   const btn = document.getElementById('smart-remind-btn');
@@ -418,12 +419,27 @@ function checkDueTasksQueue() {
 function triggerNextReminder() {
   if (autoRemindQueue.length === 0) { alert("You have 0 tasks in the queue that are Due/Overdue with a Mobile Number attached."); return; }
   
-  const t = autoRemindQueue.shift();
-  const waText = encodeURIComponent(`🚨 *OVERDUE TASK REMINDER* 🚨\n\nHello ${t.assigned_to || 'Team'},\nThis is an automated reminder that your task is currently due or overdue!\n\n*Task:* ${t.text}\n*Priority:* ${t.priority || 'Medium'}\n*Due Date:* ${t.due_date}\n\nPlease update the task desk once completed.`);
-  const mobileStr = t.mobile ? String(t.mobile).replace(/\D/g,'') : '';
-  const waLink = `https://wa.me/${mobileStr}?text=${waText}`;
+  // Group by the first user in the queue
+  const targetTask = autoRemindQueue[0];
+  const targetMobile = targetTask.mobile;
+  const targetName = targetTask.assigned_to || 'Team';
+
+  // Extract all overdue tasks for this specific user
+  const userTasks = autoRemindQueue.filter(t => t.mobile === targetMobile);
   
-  checkDueTasksQueue(); 
+  // Remove them from the overall queue so they aren't reminded again this session
+  autoRemindQueue = autoRemindQueue.filter(t => t.mobile !== targetMobile);
+
+  let waText = `🚨 *TASK REMINDER* 🚨\n\nHello ${targetName},\nYou have ${userTasks.length} pending task(s) currently due or overdue:\n\n`;
+  userTasks.forEach((t, index) => {
+      waText += `${index + 1}. *${t.text}* (Due: ${t.due_date})\n`;
+  });
+  waText += `\nPlease update the task desk once completed or send them for review.`;
+
+  const mobileStr = String(targetMobile).replace(/\D/g,'');
+  const waLink = `https://wa.me/${mobileStr}?text=${encodeURIComponent(waText)}`;
+  
+  checkDueTasksQueue(); // update UI count 
   window.open(waLink, '_blank');
 }
 
@@ -447,7 +463,7 @@ async function doLogin(){
   
   if (currentUser.role === 'admin') { activeTab = 'overview'; activeDeptCode = null; } 
   else if (currentUser.role === 'hod') { activeTab = 'scoreboard'; activeDeptCode = currentUser.department; }
-  else { activeTab = 'mytasks'; activeDeptCode = currentUser.department; }
+  else { activeTab = 'mychecklist'; activeDeptCode = currentUser.department; }
 
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app-screen').style.display = 'block';
@@ -474,9 +490,9 @@ function renderShell(){
   if(currentUser.role === 'admin'){
     tabs = [{id:'overview', label:'Overview'}, {id:'alltasks', label:'All Tasks'}, {id:'scoreboard', label:'📊 Scoreboard'}, {id:'users', label:'Admin Control'}];
   } else if (currentUser.role === 'hod') {
-    tabs = [{id:'scoreboard', label:'📊 Scoreboard'}, {id:'depttasks', label:'Dept Tasks (HOD)'}, {id:'mytasks', label:'My Tasks'}];
+    tabs = [{id:'scoreboard', label:'📊 Scoreboard'}, {id:'depttasks', label:'Dept Tasks (HOD)'}, {id:'mychecklist', label:'My Checklist'}, {id:'mytasks', label:'My Delegated Tasks'}];
   } else {
-    tabs = [{id:'scoreboard', label:'📊 Scoreboard'}, {id:'mytasks', label:'My Tasks'}];
+    tabs = [{id:'scoreboard', label:'📊 Scoreboard'}, {id:'mychecklist', label:'My Checklist'}, {id:'mytasks', label:'My Delegated Tasks'}];
   }
 
   tabsEl.innerHTML = tabs.map(t=>`<div class="tab ${activeTab===t.id?'active':''}" data-tab="${t.id}">${t.label}</div>`).join('');
@@ -497,11 +513,12 @@ function renderContent(){
   if(activeTab === 'scoreboard') return renderScoreboard(el);
   if(activeTab === 'users') return renderAdminControl(el);
   if(activeTab === 'alltasks'){
-    if(activeDeptCode) return renderDeptTasks(el, activeDeptCode, 'admin');
+    if(activeDeptCode) return renderDeptTasks(el, activeDeptCode, 'admin', 'all');
     return renderAllTasksList(el);
   }
-  if(activeTab === 'depttasks') return renderDeptTasks(el, currentUser.department, 'hod');
-  if(activeTab === 'mytasks') return renderDeptTasks(el, currentUser.department, 'employee');
+  if(activeTab === 'depttasks') return renderDeptTasks(el, currentUser.department, 'hod', 'all');
+  if(activeTab === 'mychecklist') return renderDeptTasks(el, currentUser.department, 'employee', 'checklist');
+  if(activeTab === 'mytasks') return renderDeptTasks(el, currentUser.department, 'employee', 'delegated');
 }
 
 /* ---------------- GEM METER & HELPER FUNCTIONS ---------------- */
@@ -620,10 +637,10 @@ function renderScoreboard(el){
               <span class="role-pill role-${r.role}" style="margin-right:6px;">${r.role.toUpperCase()}</span>
               <span style="color:var(--ink-500); font-size:12px;">${escapeHtml(deptName(r.deptCode))}</span>
             </td>
-            <td>${r.tasksCompleted} / ${r.tasksTotal} done</td>
+            <td>${r.tasksCompleted} /${r.tasksTotal} done</td>
             <td>
               <div style="display:flex; align-items:center; gap:10px;">
-                <div class="bar-track" style="flex:1; max-width:140px;"><div class="bar-fill" style="width:${r.kpiScore}%; background:${barColor(r.kpiScore)}"></div></div>
+                <div class="bar-track" style="flex:1; max-width:140px;"><div class="bar-fill" style="width:${r.kpiScore}\%; background:${barColor(r.kpiScore)}"></div></div>
                 <span class="mono" style="font-weight:600; font-size:14px; color:${barColor(r.kpiScore)}">${r.kpiScore} Pts</span>
               </div>
             </td>
@@ -742,7 +759,7 @@ function renderOverview(el){
     <div class="gem-grid">
       ${DEPARTMENTS.map(d=>{
         const s = deptStats(d.code);
-        return `<div class="gem-card" data-dept="${d.code}"><div class="top-row"><div class="gem-meter">${gemSvg(s.pct)}</div><div><div class="name">${d.name}</div><div class="stat">${s.done} / ${s.total} done</div></div></div><div class="bar-track"><div class="bar-fill" style="width:${s.pct}%; background:${barColor(s.pct)}"></div></div><div class="pct ${pctClass(s.pct)}">${s.pct}%</div></div>`;
+        return `<div class="gem-card" data-dept="${d.code}"><div class="top-row"><div class="gem-meter">${gemSvg(s.pct)}</div><div><div class="name">${d.name}</div><div class="stat">${s.done} /${s.total} done</div></div></div><div class="bar-track"><div class="bar-fill" style="width:${s.pct}\%; background:${barColor(s.pct)}"></div></div><div class="pct ${pctClass(s.pct)}">${s.pct}%</div></div>`;
       }).join('')}
     </div>
   `;
@@ -756,15 +773,15 @@ function renderAllTasksList(el){
     <div class="gem-grid">
       ${DEPARTMENTS.map(d=>{
         const s = deptStats(d.code);
-        return `<div class="gem-card" data-dept="${d.code}"><div class="top-row"><div class="gem-meter">${gemSvg(s.pct)}</div><div><div class="name">${d.name}</div><div class="stat">${s.done} / ${s.total} done</div></div></div><div class="bar-track"><div class="bar-fill" style="width:${s.pct}%; background:${barColor(s.pct)}"></div></div></div>`;
+        return `<div class="gem-card" data-dept="${d.code}"><div class="top-row"><div class="gem-meter">${gemSvg(s.pct)}</div><div><div class="name">${d.name}</div><div class="stat">${s.done} /${s.total} done</div></div></div><div class="bar-track"><div class="bar-fill" style="width:${s.pct}\%; background:${barColor(s.pct)}"></div></div></div>`;
       }).join('')}
     </div>
   `;
   el.querySelectorAll('.gem-card').forEach(c=>{ c.addEventListener('click', ()=>{ activeDeptCode = c.dataset.dept; renderContent(); }); });
 }
 
-/* ---------------- DEPARTMENT TASK LIST (Date-Wise Smart View) ---------------- */
-function renderDeptTasks(el, code, viewRole){
+/* ---------------- DEPARTMENT TASK LIST (Date-Wise Smart View & Subtypes) ---------------- */
+function renderDeptTasks(el, code, viewRole, subType = 'all'){
   const currentDept = DEPARTMENTS.find(d => d.code === code || d.name === code) || { name: code, code: code };
   const safeCode = currentDept.code;
   const deptDisplayName = currentDept.name;
@@ -775,15 +792,44 @@ function renderDeptTasks(el, code, viewRole){
     list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); 
   }
 
+  // Handle Employee Tabs Sub-filtering (Checklist vs Delegated)
+  let titleText = deptDisplayName;
+  if (viewRole === 'employee') {
+      if (subType === 'checklist') {
+          list = list.filter(t => t.category === 'Check List' || t.category === 'Daily Task');
+          titleText = 'My Checklist';
+      } else if (subType === 'delegated') {
+          list = list.filter(t => t.category === 'Delegated Task' || t.category === 'Target / Metric');
+          titleText = 'My Delegated Tasks';
+      }
+  }
+
   const dateObj = new Date(selectedLogDate + 'T00:00:00');
   const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+  const isToday = selectedLogDate === getTodayStr();
+  const isYesterday = selectedLogDate === getYesterdayStr();
 
+  // Explicit Historical Status Logging Control
   let taskDisplayList = list.map(t => {
     const logEntry = TASK_LOGS.find(l => String(l.task_id) === String(t.id));
+    
+    let displayStatus = 'Not Done';
+    let displayNotes = '';
+
+    if (logEntry) {
+        displayStatus = logEntry.status;
+        displayNotes = logEntry.notes;
+    } else if (isToday) {
+        // Only fallback to the master task status if we are looking at TODAY. 
+        // If they chose a past date and have no log, it definitively implies "Not Done" for that historical date.
+        displayStatus = t.status || 'Not Done';
+        displayNotes = t.notes || '';
+    }
+
     return {
       ...t,
-      currentStatus: logEntry ? logEntry.status : (t.status || 'Not Done'),
-      currentNotes: logEntry ? (logEntry.notes || '') : (t.notes || '')
+      currentStatus: displayStatus,
+      currentNotes: displayNotes
     };
   });
 
@@ -809,9 +855,6 @@ function renderDeptTasks(el, code, viewRole){
     return uDept === cDept || u.department === currentDept.name;
   });
 
-  const isToday = selectedLogDate === getTodayStr();
-  const isYesterday = selectedLogDate === getYesterdayStr();
-  
   const dateBarHtml = `
     <div class="date-bar">
       <div class="date-bar-left">
@@ -830,10 +873,7 @@ function renderDeptTasks(el, code, viewRole){
 
   let addTaskHtml = '';
   if(viewRole === 'admin') {
-      let assignOptions = `<option value="">-- Unassigned --</option>` 
-                        + `<option value="DISTRIBUTE_ALL" style="font-weight:bold; color:var(--emerald-700);">➔ Distribute to ALL in Dept</option>`
-                        + deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
-
+      // Changed standard select to Searchable Datalist Input
       addTaskHtml = `
       <div class="add-task-box">
         <h4 style="margin:0 0 10px; color:var(--emerald-900); font-family:'Inter'; font-weight:700;">Assign a New Task</h4>
@@ -848,7 +888,14 @@ function renderDeptTasks(el, code, viewRole){
               <option value="Target / Metric">Target / Metric (Numeric Goal)</option>
             </select>
           </div>
-          <div><label>Assign To</label><select id="new-task-assign">${assignOptions}</select></div>
+          <div style="flex: 1 1 200px;">
+            <label>Assign To (Searchable)</label>
+            <input list="assign-options" id="new-task-assign" placeholder="Search or select employee..." style="width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:7px;">
+            <datalist id="assign-options">
+              <option value="DISTRIBUTE_ALL">➔ Distribute to ALL in Dept</option>
+              ${deptUsers.map(u => `<option value="${escapeAttr(u.name)}">${escapeHtml(u.name)} (${u.role})</option>`).join('')}
+            </datalist>
+          </div>
           <div><label>Frequency</label><select id="new-task-frequency">
             <option value="One-Time" selected>One-Time</option>
             <option value="Daily">Daily</option>
@@ -876,12 +923,12 @@ function renderDeptTasks(el, code, viewRole){
 
   el.innerHTML = `
     ${viewRole === 'admin' ? `<div class="back-link" id="back-to-all">← Back to all departments</div>` : ''}
-    <div class="section-head"><div><h2>${viewRole === 'employee' ? 'My Assigned Tasks' : deptDisplayName}</h2><div class="desc">${taskDisplayList.length} tasks on file for this view</div></div></div>
+    <div class="section-head"><div><h2>${titleText}</h2><div class="desc">${taskDisplayList.length} tasks on file for this view</div></div></div>
     
     ${dateBarHtml}
 
     <div class="filter-row">
-      ${['All','Not Done','Done','On Leave'].map(f=>`<div class="chip ${taskFilter===f?'active':''}" data-f="${f}">${f}</div>`).join('')}
+      ${['All','Not Done','Pending Review','Done','On Leave'].map(f=>`<div class="chip ${taskFilter===f?'active':''}" data-f="${f}">${f}</div>`).join('')}
     </div>
     
     <div id="task-list">${taskDisplayList.length ? taskDisplayList.map(t=>taskRowHtml(t, viewRole, deptUsers)).join('') : '<div class="empty-note">No tasks match this filter or search query.</div>'}</div>
@@ -892,26 +939,26 @@ function renderDeptTasks(el, code, viewRole){
   document.getElementById('quick-today-btn').addEventListener('click', async () => {
     selectedLogDate = getTodayStr();
     await loadDailyLogs(selectedLogDate);
-    renderDeptTasks(el, code, viewRole);
+    renderDeptTasks(el, code, viewRole, subType);
   });
 
   document.getElementById('quick-yesterday-btn').addEventListener('click', async () => {
     selectedLogDate = getYesterdayStr();
     await loadDailyLogs(selectedLogDate);
-    renderDeptTasks(el, code, viewRole);
+    renderDeptTasks(el, code, viewRole, subType);
   });
 
   document.getElementById('date-picker-input').addEventListener('change', async (e) => {
     if (e.target.value) {
       selectedLogDate = e.target.value;
       await loadDailyLogs(selectedLogDate);
-      renderDeptTasks(el, code, viewRole);
+      renderDeptTasks(el, code, viewRole, subType);
     }
   });
 
   document.getElementById('task-search-input').addEventListener('input', (e) => {
     taskSearchTerm = e.target.value;
-    renderDeptTasks(el, code, viewRole);
+    renderDeptTasks(el, code, viewRole, subType);
   });
 
   if(viewRole === 'admin'){ 
@@ -919,14 +966,14 @@ function renderDeptTasks(el, code, viewRole){
   }
   
   el.querySelectorAll('.filter-row .chip').forEach(c=>{ 
-    c.addEventListener('click', ()=>{ taskFilter = c.dataset.f; renderDeptTasks(el, code, viewRole); }); 
+    c.addEventListener('click', ()=>{ taskFilter = c.dataset.f; renderDeptTasks(el, code, viewRole, subType); }); 
   });
 
   document.getElementById('save-all-btn').addEventListener('click', async () => {
     await saveAllTasksForDay(el, code, viewRole);
   });
 
-  wireTaskRowEvents(el, code, viewRole, deptUsers);
+  wireTaskRowEvents(el, code, viewRole, deptUsers, subType);
 
   if(document.getElementById('add-task-btn')){
       document.getElementById('add-task-btn').addEventListener('click', async ()=>{
@@ -934,7 +981,7 @@ function renderDeptTasks(el, code, viewRole){
         if(!txt){ showToast('Type a task description first'); return; }
         
         const catValue = document.getElementById('new-task-category').value;
-        const assigned_val = document.getElementById('new-task-assign').value;
+        const assigned_val = document.getElementById('new-task-assign').value; // Using value from datalist input
         const targetVal = catValue === 'Target / Metric' ? parseFloat(document.getElementById('new-task-target').value || 0) : 0;
         
         const baseTask = {
@@ -980,7 +1027,7 @@ function renderDeptTasks(el, code, viewRole){
           if(data) data.forEach(d => TASKS.push(d));
           showToast(tasksToInsert.length > 1 ? `Task distributed to ${tasksToInsert.length} employees!` : 'Task added successfully!');
           checkDueTasksQueue(); 
-          renderDeptTasks(el, safeCode, viewRole);
+          renderDeptTasks(el, safeCode, viewRole, subType);
         }
       });
   }
@@ -1016,12 +1063,6 @@ function taskRowHtml(t, viewRole, deptUsers = []){
       }
   }
 
-  const waText = encodeURIComponent(`Hello ${t.assigned_to || 'Team'}, reminder for task on ${selectedLogDate}:\n\n*${t.text}*\nStatus: ${currentStatus}`);
-  const mobileStr = t.mobile ? String(t.mobile).replace(/\D/g,'') : '';
-  const waLink = `https://wa.me/${mobileStr}?text=${waText}`;
-
-  const deleteBtnStyle = viewRole === 'employee' ? 'style="display:none;"' : '';
-  const waBtnStyle = (t.mobile && viewRole !== 'employee') ? `<a href="${waLink}" target="_blank" class="btn btn-whatsapp btn-sm" title="Send Reminder">📱 Remind</a>` : '';
   const employeeAssignedBadge = (viewRole === 'employee' && t.assigned_to) ? `<span class="assigned-badge">${escapeHtml(t.assigned_to)}</span>` : '';
 
   const delegationDropdown = (viewRole !== 'employee') ? `
@@ -1032,30 +1073,52 @@ function taskRowHtml(t, viewRole, deptUsers = []){
     </select>
   ` : '';
 
+  let statusOptions = '';
+  if (viewRole === 'employee') {
+      // Employees send for review, they don't mark completely Done unless previously approved.
+      if (currentStatus === 'Done') {
+          statusOptions = `<option value="Done" selected disabled>Done (Approved)</option>`;
+      } else {
+          statusOptions = `
+            <option value="Not Done" ${currentStatus==='Not Done'?'selected':''}>Not Done</option>
+            <option value="Pending Review" ${currentStatus==='Pending Review'?'selected':''}>Send for Review</option>
+            <option value="On Leave" ${currentStatus==='On Leave'?'selected':''}>On Leave</option>
+          `;
+      }
+  } else {
+      // Admins/HODs see the full workflow
+      statusOptions = `
+        <option value="Not Done" ${currentStatus==='Not Done' || currentStatus==='Pending' ? 'selected':''}>Not Done</option>
+        <option value="Pending Review" ${currentStatus==='Pending Review'?'selected':''}>Pending Review</option>
+        <option value="Done" ${currentStatus==='Done'?'selected':''}>Done (Approved)</option>
+        <option value="On Leave" ${currentStatus==='On Leave'?'selected':''}>On Leave</option>
+      `;
+  }
+
   let controlsHtml = '';
+  // If the task is definitively Done and viewed by an employee, lock down inputs
+  const isEmployeeLocked = (currentStatus === 'Done' && viewRole === 'employee');
+  const disabledAttr = isEmployeeLocked ? 'disabled style="background:#f1f5f9; cursor:not-allowed;"' : '';
+  const saveBtnDisplay = isEmployeeLocked ? 'style="display:none;"' : '';
   
   if (cat === 'Target / Metric') {
       let achieveVal = t.currentNotes || '';
       controlsHtml = `
-        ${waBtnStyle}
         ${delegationDropdown}
         <div style="background:var(--ivory-100); padding:7px 12px; border-radius:6px; font-weight:700; font-size:12.5px; color:var(--emerald-800); border:1px solid var(--line);">🎯 Target: ${t.score || 0}</div>
-        <input type="number" class="note-input" data-role="achieve-input" placeholder="Your Achievement..." value="${escapeAttr(achieveVal)}" style="width:160px;">
-        <button class="btn btn-ghost btn-sm" data-role="save">Save</button>
-        <button class="btn btn-danger btn-sm" data-role="delete" title="Remove task" ${deleteBtnStyle}>✕</button>
+        <input type="number" class="note-input" data-role="achieve-input" placeholder="Your Achievement..." value="${escapeAttr(achieveVal)}" style="width:160px;" ${disabledAttr}>
+        <button class="btn btn-ghost btn-sm" data-role="save" ${saveBtnDisplay}>Save</button>
+        ${viewRole !== 'employee' ? `<button class="btn btn-danger btn-sm" data-role="delete" title="Remove task">✕</button>` : ''}
       `;
   } else {
       controlsHtml = `
-        ${waBtnStyle}
         ${delegationDropdown}
-        <select class="status-select ${statusClass}" data-role="status">
-          <option value="Not Done" ${currentStatus==='Not Done' || currentStatus==='Pending' ? 'selected':''}>Not Done</option>
-          <option value="Done" ${currentStatus==='Done'?'selected':''}>Done</option>
-          <option value="On Leave" ${currentStatus==='On Leave'?'selected':''}>On Leave</option>
+        <select class="status-select ${statusClass}" data-role="status" ${isEmployeeLocked ? 'disabled' : ''}>
+          ${statusOptions}
         </select>
-        <input type="text" class="note-input" data-role="notes" placeholder="Add a note..." value="${escapeAttr(t.currentNotes || '')}">
-        <button class="btn btn-ghost btn-sm" data-role="save">Save</button>
-        <button class="btn btn-danger btn-sm" data-role="delete" title="Remove task" ${deleteBtnStyle}>✕</button>
+        <input type="text" class="note-input" data-role="notes" placeholder="Add a note..." value="${escapeAttr(t.currentNotes || '')}" ${disabledAttr}>
+        <button class="btn btn-ghost btn-sm" data-role="save" ${saveBtnDisplay}>Save</button>
+        ${viewRole !== 'employee' ? `<button class="btn btn-danger btn-sm" data-role="delete" title="Remove task">✕</button>` : ''}
       `;
   }
 
@@ -1067,7 +1130,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
         ${t.frequency ? `<span class="badge-frequency">🔁 ${t.frequency}</span>` : ''}
         <span class="badge-priority ${priClass}">${t.priority || 'Medium'}</span>
         ${t.due_date ? `<span class="${dueBadgeClass}">${dueText}</span>${delayBadge}` : ''}
-        ${currentStatus === 'Done' ? `<span class="badge-checklist" style="background:#dcfce7; color:#16a34a; border-color:#bbf7d0;">✔ Done for ${selectedLogDate}</span>` : ''}
+        ${currentStatus === 'Done' ? `<span class="badge-checklist" style="background:#dcfce7; color:#16a34a; border-color:#bbf7d0;">✔ Approved for ${selectedLogDate}</span>` : ''}
       </div>
       <div class="meta">
         ${employeeAssignedBadge}
@@ -1085,7 +1148,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s){ return escapeHtml(s); }
 
-function wireTaskRowEvents(el, code, viewRole, deptUsers){
+function wireTaskRowEvents(el, code, viewRole, deptUsers, subType){
   el.querySelectorAll('.task-row').forEach(row=>{
     const id = row.dataset.id;
     const task = TASKS.find(t=>String(t.id) === String(id));
@@ -1109,7 +1172,13 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers){
           newNotes = achieveInput ? achieveInput.value : '';
           const targetScore = parseFloat(task.score) || 0;
           const achievedVal = parseFloat(newNotes) || 0;
-          newStatus = achievedVal >= targetScore && targetScore > 0 ? 'Done' : 'Not Done';
+          
+          if (achievedVal >= targetScore && targetScore > 0) {
+              // Employee triggers review, Admin triggers immediate done
+              newStatus = viewRole === 'employee' ? 'Pending Review' : 'Done';
+          } else {
+              newStatus = 'Not Done';
+          }
         } else {
           const noteInput = row.querySelector('[data-role="notes"]');
           newNotes = noteInput ? noteInput.value : '';
@@ -1118,7 +1187,7 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers){
         await saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers);
         showToast(`Saved for ${selectedLogDate}!`);
         await loadDailyLogs(selectedLogDate);
-        renderDeptTasks(el, code, viewRole);
+        renderDeptTasks(el, code, viewRole, subType);
       });
     }
 
@@ -1132,7 +1201,7 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers){
           else {
             TASKS = TASKS.filter(t=>String(t.id) !== String(id));
             showToast('Task removed');
-            renderDeptTasks(el, code, viewRole);
+            renderDeptTasks(el, code, viewRole, subType);
           }
         });
       }
@@ -1205,7 +1274,12 @@ async function saveAllTasksForDay(el, code, viewRole) {
       newNotes = achieveInput ? achieveInput.value : '';
       const targetScore = parseFloat(task.score) || 0;
       const achievedVal = parseFloat(newNotes) || 0;
-      newStatus = achievedVal >= targetScore && targetScore > 0 ? 'Done' : 'Not Done';
+      
+      if (achievedVal >= targetScore && targetScore > 0) {
+          newStatus = viewRole === 'employee' ? 'Pending Review' : 'Done';
+      } else {
+          newStatus = 'Not Done';
+      }
     } else {
       const noteInput = row.querySelector('[data-role="notes"]');
       newNotes = noteInput ? noteInput.value : '';
@@ -1231,7 +1305,8 @@ async function saveAllTasksForDay(el, code, viewRole) {
   } else {
     showToast(`All tasks saved for ${selectedLogDate}!`);
     await loadDailyLogs(selectedLogDate);
-    renderDeptTasks(el, code, viewRole);
+    // Since we don't strictly pass subtype down for bulk save, we reload based on active view logic
+    renderContent(); 
   }
 }
 
