@@ -265,8 +265,8 @@
     
     <div class="eval-row">
       <div class="eval-info">
-        <h4>1. Target vs Achievement Metrics</h4>
-        <p>Auto-calculated (65%)</p>
+        <h4>1. Overall Task Completion Volume</h4>
+        <p>Auto-calculated Ratio (65%)</p>
       </div>
       <div class="eval-input"><span class="eval-auto" id="eval-target-score">0</span> / 65</div>
     </div>
@@ -384,7 +384,7 @@ function showToast(msg){
 }
 
 // ==========================================
-// BULK WHATSAPP REMINDER (Groups by User)
+// BULK WHATSAPP REMINDER
 // ==========================================
 function checkDueTasksQueue() {
   if (!currentUser || currentUser.role !== 'admin') {
@@ -562,11 +562,17 @@ function renderScoreboard(el){
   
   let empRows = evalUsers.map(u => {
     let evalData = latestEvals[u.name];
-    let totalScore = evalData ? parseFloat(evalData.total_score) : 0;
     
+    // Auto-calculate the 65% base score off overall Task Volume completion
     let myTasks = TASKS.filter(t => t.assigned_to === u.name);
     let completed = myTasks.filter(t => t.status === 'Done').length;
     let total = myTasks.length;
+    let autoScore = total > 0 ? (completed / total) * 65 : 0;
+
+    // Apply manager's remaining 35% manual evaluations if available
+    let managerScore = evalData ? (parseFloat(evalData.goals_score || 0) + parseFloat(evalData.attendance_score || 0) + parseFloat(evalData.behaviour_score || 0)) : 0;
+    
+    let totalScore = Math.round(autoScore + managerScore);
     
     let canEvaluate = false;
     if (currentUser.role === 'admin') {
@@ -662,20 +668,11 @@ function openEvalModal(empName) {
     currentEvalEmp = empName;
     document.getElementById('eval-emp-name').innerText = `Evaluate: ${empName}`;
     
-    let targetTasks = TASKS.filter(t => t.assigned_to === empName && t.category === 'Target / Metric');
-    
-    let totalTarget = 0;
-    let totalAchieve = 0;
-    
-    targetTasks.forEach(t => { 
-        totalTarget += (parseFloat(t.score) || 0); 
-        totalAchieve += (parseFloat(t.notes) || 0); 
-    });
-
-    let auto65 = 0;
-    if (totalTarget > 0) {
-        auto65 = Math.min(65, (totalAchieve / totalTarget) * 65);
-    }
+    // Auto 65% is now fully synced with total task completion volume instead of just targets
+    let myTasks = TASKS.filter(t => t.assigned_to === empName);
+    let completed = myTasks.filter(t => t.status === 'Done').length;
+    let total = myTasks.length;
+    let auto65 = total > 0 ? (completed / total) * 65 : 0;
 
     document.getElementById('eval-target-score').innerText = Math.round(auto65);
     document.getElementById('eval-goals').value = 0;
@@ -780,6 +777,8 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
   }
 
   let titleText = deptDisplayName;
+  const isDelegatedView = (viewRole === 'employee' && subType === 'delegated');
+  
   if (viewRole === 'employee') {
       if (subType === 'checklist') {
           list = list.filter(t => t.category === 'Check List' || t.category === 'Daily Task');
@@ -790,16 +789,16 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
       }
   }
 
-  const dateObj = new Date(selectedLogDate + 'T00:00:00');
+  // If Delegated View, we operate strictly in the 'Today' context internally without showing the date picker
+  const activeDateStr = isDelegatedView ? getTodayStr() : selectedLogDate;
+  const dateObj = new Date(activeDateStr + 'T00:00:00');
   const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
-  const isToday = selectedLogDate === getTodayStr();
+  const isToday = activeDateStr === getTodayStr();
 
-  // Explicit Historical Status Logging Control & Global One-Time Logic
   let taskDisplayList = list.filter(t => {
-      // Hide task entirely if the calendar date is BEFORE the task was even created/started
       if (t.start_date) {
           let dStart = new Date(t.start_date);
-          let dSelect = new Date(selectedLogDate);
+          let dSelect = new Date(activeDateStr);
           dStart.setHours(0,0,0,0); dSelect.setHours(0,0,0,0);
           if (dSelect < dStart) return false;
       }
@@ -810,12 +809,12 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
     let displayStatus = 'Not Done';
     let displayNotes = '';
 
-    // If it's a one-time delegated task, use its global status from the main table
     if (t.frequency === 'One-Time') {
+        // Global One-Time status
         displayStatus = t.status || 'Not Done';
         displayNotes = t.notes || '';
     } else {
-        // If it's a daily recurring task, use the calendar date logs
+        // Date-specific recurring status
         if (logEntry) {
             displayStatus = logEntry.status;
             displayNotes = logEntry.notes;
@@ -854,7 +853,18 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
     return uDept === cDept || u.department === currentDept.name;
   });
 
-  const dateBarHtml = `
+  // Master UI decision: Hide the calendar selector completely for "Delegated Tasks" so they act as a persistent list
+  const dateBarHtml = isDelegatedView ? `
+    <div class="date-bar">
+      <div class="date-bar-left">
+        <span style="font-size:13px; font-weight:700; color:var(--emerald-800);">🎯 Persistent Master Task List</span>
+      </div>
+      <div class="date-bar-right">
+        <button class="btn btn-save-all btn-sm" id="save-all-btn">💾 Save All</button>
+        <input type="text" class="search-input" id="task-search-input" placeholder="Search tasks or employees..." value="${escapeAttr(taskSearchTerm)}">
+      </div>
+    </div>
+  ` : `
     <div class="date-bar">
       <div class="date-bar-left">
         <span style="font-size:12px; font-weight:700; color:var(--ink-500); text-transform:uppercase;">📅 Date:</span>
@@ -927,18 +937,20 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
       ${['All','Not Done','Pending Review','Done','On Leave'].map(f=>`<div class="chip ${taskFilter===f?'active':''}" data-f="${f}">${f}</div>`).join('')}
     </div>
     
-    <div id="task-list">${taskDisplayList.length ? taskDisplayList.map(t=>taskRowHtml(t, viewRole, deptUsers)).join('') : '<div class="empty-note">No tasks match this filter or search query.</div>'}</div>
+    <div id="task-list">${taskDisplayList.length ? taskDisplayList.map(t=>taskRowHtml(t, viewRole, deptUsers, isDelegatedView)).join('') : '<div class="empty-note">No tasks match this filter or search query.</div>'}</div>
 
     ${addTaskHtml}
   `;
 
-  document.getElementById('date-picker-input').addEventListener('change', async (e) => {
-    if (e.target.value) {
-      selectedLogDate = e.target.value;
-      await loadDailyLogs(selectedLogDate);
-      renderDeptTasks(el, code, viewRole, subType);
-    }
-  });
+  if (!isDelegatedView) {
+      document.getElementById('date-picker-input').addEventListener('change', async (e) => {
+        if (e.target.value) {
+          selectedLogDate = e.target.value;
+          await loadDailyLogs(selectedLogDate);
+          renderDeptTasks(el, code, viewRole, subType);
+        }
+      });
+  }
 
   document.getElementById('task-search-input').addEventListener('input', (e) => {
     taskSearchTerm = e.target.value;
@@ -954,10 +966,10 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
   });
 
   document.getElementById('save-all-btn').addEventListener('click', async () => {
-    await saveAllTasksForDay(el, code, viewRole);
+    await saveAllTasksForDay(el, code, viewRole, isDelegatedView);
   });
 
-  wireTaskRowEvents(el, code, viewRole, deptUsers, subType);
+  wireTaskRowEvents(el, code, viewRole, deptUsers, subType, isDelegatedView);
 
   if(document.getElementById('add-task-btn')){
       document.getElementById('add-task-btn').addEventListener('click', async ()=>{
@@ -1017,7 +1029,7 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
   }
 }
 
-function taskRowHtml(t, viewRole, deptUsers = []){
+function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
   const currentStatus = t.currentStatus || 'Not Done';
   const statusClass = 'status-' + currentStatus.replace(/\s+/g,'-');
   const priClass = 'badge-' + (t.priority || 'Medium').toLowerCase();
@@ -1033,11 +1045,10 @@ function taskRowHtml(t, viewRole, deptUsers = []){
   let dueText = '';
   let dueBadgeClass = 'badge-date';
 
-  // Only calculate running "Overdue by X days" for ONE-TIME tasks
   if (t.due_date && t.frequency === 'One-Time') {
       dueText = `Due: ${t.due_date}`;
       let dDue = new Date(t.due_date);
-      let dComp = new Date(selectedLogDate); // Calculate based on the view date
+      let dComp = new Date(isDelegatedView ? getTodayStr() : selectedLogDate);
       dDue.setHours(0,0,0,0);
       dComp.setHours(0,0,0,0);
       let diffDays = Math.floor((dComp - dDue) / (1000 * 60 * 60 * 24));
@@ -1047,7 +1058,6 @@ function taskRowHtml(t, viewRole, deptUsers = []){
           delayBadge = `<span class="badge-overdue" style="margin-left:6px;">Overdue by ${diffDays} day(s)</span>`;
       }
   } else if (t.frequency !== 'One-Time') {
-      // For daily tasks, hide the massive overdue badge. It's just a daily routine.
       dueText = 'Daily Routine';
   }
 
@@ -1131,7 +1141,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
         ${t.frequency ? `<span class="badge-frequency">🔁 ${t.frequency}</span>` : ''}
         <span class="badge-priority ${priClass}">${t.priority || 'Medium'}</span>
         ${dueText ? `<span class="${dueBadgeClass}">${dueText}</span>${delayBadge}` : ''}
-        ${currentStatus === 'Done' ? `<span class="badge-checklist" style="background:#dcfce7; color:#16a34a; border-color:#bbf7d0;">✔ ${cat === 'Check List' ? 'Done' : 'Approved'} for${selectedLogDate}</span>` : ''}
+        ${currentStatus === 'Done' ? `<span class="badge-checklist" style="background:#dcfce7; color:#16a34a; border-color:#bbf7d0;">✔ ${cat === 'Check List' ? 'Done' : 'Approved'}</span>` : ''}
       </div>
       <div class="meta">
         ${employeeAssignedBadge}
@@ -1149,7 +1159,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s){ return escapeHtml(s); }
 
-function wireTaskRowEvents(el, code, viewRole, deptUsers, subType){
+function wireTaskRowEvents(el, code, viewRole, deptUsers, subType, isDelegatedView){
   el.querySelectorAll('.task-row').forEach(row=>{
     const id = row.dataset.id;
     const task = TASKS.find(t=>String(t.id) === String(id));
@@ -1184,9 +1194,9 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers, subType){
           newNotes = noteInput ? noteInput.value : '';
         }
 
-        await saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers);
-        showToast(`Saved for ${selectedLogDate}!`);
-        await loadDailyLogs(selectedLogDate);
+        await saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDelegatedView);
+        showToast('Saved Successfully!');
+        if (!isDelegatedView) { await loadDailyLogs(selectedLogDate); }
         renderDeptTasks(el, code, viewRole, subType);
       });
     }
@@ -1209,7 +1219,7 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers, subType){
   });
 }
 
-async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers) {
+async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDelegatedView) {
   const assignSelect = row.querySelector('[data-role="assign"]');
   let currentAssignee = task.assigned_to;
   
@@ -1227,7 +1237,6 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers) {
     }
   }
 
-  // If ONE-TIME, update global master table, NOT just the daily calendar log
   if (task.frequency === 'One-Time') {
       const { error } = await supabaseClient.from('tasks').update({
           status: newStatus,
@@ -1243,11 +1252,11 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers) {
           console.error("Error saving global task:", error);
       }
   } else {
-      // If DAILY recurring, update the date-specific calendar log
+      const activeDate = isDelegatedView ? getTodayStr() : selectedLogDate;
       const logPayload = {
         task_id: String(task.id),
         assigned_to: currentAssignee,
-        log_date: selectedLogDate,
+        log_date: activeDate,
         status: newStatus,
         notes: newNotes,
         updated_by: currentUser.name,
@@ -1262,8 +1271,7 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers) {
         console.error("Error saving daily log:", error);
       }
       
-      // Keep master table mildly updated if saved on "Today" for general fallback
-      if (selectedLogDate === getTodayStr()) {
+      if (activeDate === getTodayStr()) {
           await supabaseClient.from('tasks').update({
               status: newStatus,
               notes: newNotes,
@@ -1274,11 +1282,12 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers) {
   }
 }
 
-async function saveAllTasksForDay(el, code, viewRole) {
+async function saveAllTasksForDay(el, code, viewRole, isDelegatedView) {
   const rows = el.querySelectorAll('.task-row');
   if (rows.length === 0) return;
 
   let upsertList = [];
+  const activeDate = isDelegatedView ? getTodayStr() : selectedLogDate;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -1319,7 +1328,7 @@ async function saveAllTasksForDay(el, code, viewRole) {
         upsertList.push({
           task_id: String(task.id),
           assigned_to: task.assigned_to,
-          log_date: selectedLogDate,
+          log_date: activeDate,
           status: newStatus,
           notes: newNotes,
           updated_by: currentUser.name,
@@ -1339,8 +1348,8 @@ async function saveAllTasksForDay(el, code, viewRole) {
       }
   }
 
-  showToast(`All tasks saved for ${selectedLogDate}!`);
-  await loadDailyLogs(selectedLogDate);
+  showToast('All visible tasks saved successfully!');
+  if (!isDelegatedView) { await loadDailyLogs(selectedLogDate); }
   renderContent(); 
 }
 
