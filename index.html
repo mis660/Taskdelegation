@@ -327,6 +327,7 @@ let taskFilter = 'All';
 let taskSearchTerm = '';
 let autoRemindQueue = []; 
 
+let selectedLogDate = new Date().toLocaleDateString('en-CA');
 window.scoreboardDeptFilters = window.scoreboardDeptFilters || [];
 let currentEvalEmp = '';
 
@@ -363,7 +364,7 @@ async function loadData(){
     const { data: tData } = await supabaseClient.from('tasks').select('*');
     TASKS = tData || [];
     
-    await loadDailyLogs(getTodayStr());
+    await loadDailyLogs(selectedLogDate);
     await loadAllTaskLogs();
 
     const { data: eData } = await supabaseClient.from('evaluations').select('*');
@@ -398,7 +399,6 @@ async function loadAllTaskLogs() {
   }
 }
 
-// Fixed getEffectiveStatus with strong defensive checks
 function getEffectiveStatus(task){
   try {
       if (!task) return 'Not Done';
@@ -542,8 +542,16 @@ function renderShell(){
         activeTab = el.dataset.tab; 
         if(activeTab!=='alltasks') activeDeptCode = currentUser.role==='admin'? activeDeptCode : currentUser.department; 
 
+        // Always switch to "Today" upon initially changing tabs so the default view is fresh.
+        // The user can still pick a past date using the date picker once they are on the tab.
+        const today = getTodayStr();
+        if (selectedLogDate !== today) {
+            selectedLogDate = today;
+            await loadDailyLogs(selectedLogDate);
+        }
         taskFilter = 'All';
         taskSearchTerm = '';
+
         renderContent(); 
         renderShell(); 
     });
@@ -916,7 +924,7 @@ function renderAllTasksList(el){
   }
 }
 
-/* ---------------- DEPARTMENT TASK LIST (Smart Present-Day View) ---------------- */
+/* ---------------- DEPARTMENT TASK LIST ---------------- */
 function renderDeptTasks(el, code, viewRole, subType = 'all'){
   try {
       const currentDept = DEPARTMENTS.find(d => d && (d.code === code || d.name === code)) || { name: code, code: code };
@@ -934,7 +942,7 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
       }
 
       let titleText = deptDisplayName;
-      const isDelegatedView = (viewRole === 'employee' && (subType === 'delegated' || subType === 'pending'));
+      const isDelegatedView = (viewRole === 'employee' && subType === 'delegated');
       const isPendingView = (viewRole === 'employee' && subType === 'pending');
       
       if (viewRole === 'employee') {
@@ -949,9 +957,12 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
           }
       }
 
-      const activeDateStr = getTodayStr();
+      // Restore the Date Picker logic specifically for views that need it (Checklist / Dept Tasks)
+      // while keeping Pending & Delegated locked to "Today".
+      const activeDateStr = (isDelegatedView || isPendingView) ? getTodayStr() : selectedLogDate;
       const dateObj = new Date(activeDateStr + 'T00:00:00');
       const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+      const isToday = activeDateStr === getTodayStr();
 
       let taskDisplayList = list.filter(t => {
           const anchorDateStr = t.start_date || getTodayStr();
@@ -973,9 +984,9 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
             if (logEntry) {
                 displayStatus = logEntry.status;
                 displayNotes = logEntry.notes;
-            } else {
-                displayStatus = 'Not Done';
-                displayNotes = '';
+            } else if (isToday) {
+                displayStatus = t.status || 'Not Done';
+                displayNotes = t.notes || '';
             }
         }
 
@@ -1020,13 +1031,25 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
         return uDept === cDept || u.department === currentDept.name;
       });
 
-      const dateBarHtml = `
+      const dateBarHtml = (isPendingView || isDelegatedView) ? `
         <div class="date-bar">
           <div class="date-bar-left">
-            <span style="font-size:13px; font-weight:700; color:var(--emerald-800);">
-                ${isPendingView ? '🔴 Action Required' : isDelegatedView ? '🎯 Master Task List' : '📋 Today\'s Desk'}
+            <span style="font-size:13px; font-weight:700; color:${isPendingView ? 'var(--clay-600)' : 'var(--emerald-800)'};">
+                ${isPendingView ? '🔴 Action Required' : '🎯 Persistent Master Task List'}
             </span>
-            <span class="date-badge" style="margin-left:10px;">${escapeHtml(dayName)}, ${escapeHtml(activeDateStr)}</span>
+            <span class="date-badge" style="margin-left:10px;">Today: ${escapeHtml(getTodayStr())}</span>
+          </div>
+          <div class="date-bar-right">
+            <button class="btn btn-save-all btn-sm" id="save-all-btn">💾 Save All</button>
+            <input type="text" class="search-input" id="task-search-input" placeholder="Search tasks..." value="${escapeAttr(taskSearchTerm)}">
+          </div>
+        </div>
+      ` : `
+        <div class="date-bar">
+          <div class="date-bar-left">
+            <span style="font-size:12px; font-weight:700; color:var(--ink-500); text-transform:uppercase;">📅 Select Date:</span>
+            <input type="date" class="date-input-field" id="date-picker-input" value="${escapeAttr(activeDateStr)}">
+            <span class="date-badge">${escapeHtml(dayName)}</span>
           </div>
           <div class="date-bar-right">
             <button class="btn btn-save-all btn-sm" id="save-all-btn">💾 Save All</button>
@@ -1094,10 +1117,23 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
           ${['All','Not Done','Pending Review','Done','On Leave'].map(f=>`<div class="chip ${taskFilter===f?'active':''}" data-f="${f}">${f}</div>`).join('')}
         </div>`}
         
-        <div id="task-list">${taskDisplayList.length ? taskDisplayList.map(t=>taskRowHtml(t, viewRole, deptUsers)).join('') : (isPendingView ? '<div class="empty-note">🎉 All caught up! Nothing pending right now.</div>' : '<div class="empty-note">No tasks match this filter or search query.</div>')}</div>
+        <div id="task-list">${taskDisplayList.length ? taskDisplayList.map(t=>taskRowHtml(t, viewRole, deptUsers, isDelegatedView)).join('') : (isPendingView ? '<div class="empty-note">🎉 All caught up! Nothing pending right now.</div>' : '<div class="empty-note">No tasks match this filter or search query.</div>')}</div>
 
         ${addTaskHtml}
       `;
+
+      if (!isDelegatedView && !isPendingView) {
+          const picker = document.getElementById('date-picker-input');
+          if(picker) {
+              picker.addEventListener('change', async (e) => {
+                if (e.target.value) {
+                  selectedLogDate = e.target.value;
+                  await loadDailyLogs(selectedLogDate);
+                  renderDeptTasks(el, code, viewRole, subType);
+                }
+              });
+          }
+      }
 
       const searchInp = document.getElementById('task-search-input');
       if(searchInp) {
@@ -1119,11 +1155,11 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
       const saveBtn = document.getElementById('save-all-btn');
       if(saveBtn) {
           saveBtn.addEventListener('click', async () => {
-            await saveAllTasksForDay(el, code, viewRole);
+            await saveAllTasksForDay(el, code, viewRole, isDelegatedView);
           });
       }
 
-      wireTaskRowEvents(el, code, viewRole, deptUsers, subType);
+      wireTaskRowEvents(el, code, viewRole, deptUsers, subType, isDelegatedView);
 
       const addBtn = document.getElementById('add-task-btn');
       if(addBtn){
@@ -1188,7 +1224,7 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
   }
 }
 
-function taskRowHtml(t, viewRole, deptUsers = []){
+function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
   const currentStatus = t.currentStatus || 'Not Done';
   const statusClass = 'status-' + currentStatus.replace(/\s+/g,'-');
   const priClass = 'badge-' + (t.priority || 'Medium').toLowerCase();
@@ -1210,7 +1246,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
   if (t.due_date && t.frequency === 'One-Time') {
       dueText = `Due: ${t.due_date}`;
       let dDue = new Date(t.due_date);
-      let dComp = new Date(getTodayStr());
+      let dComp = new Date(isDelegatedView || activeTab === 'mypending' ? getTodayStr() : selectedLogDate);
       dDue.setHours(0,0,0,0);
       dComp.setHours(0,0,0,0);
       let diffDays = Math.floor((dComp - dDue) / (1000 * 60 * 60 * 24));
@@ -1324,7 +1360,7 @@ function taskRowHtml(t, viewRole, deptUsers = []){
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s){ return escapeHtml(s); }
 
-function wireTaskRowEvents(el, code, viewRole, deptUsers, subType){
+function wireTaskRowEvents(el, code, viewRole, deptUsers, subType, isDelegatedView){
   el.querySelectorAll('.task-row').forEach(row=>{
     const id = row.dataset.id;
     const task = TASKS.find(t=>String(t.id) === String(id));
@@ -1359,7 +1395,7 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers, subType){
           newNotes = noteInput ? noteInput.value : '';
         }
 
-        await saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers);
+        await saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDelegatedView);
         showToast('Saved Successfully!');
         
         await loadData();
@@ -1385,7 +1421,7 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers, subType){
   });
 }
 
-async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers) {
+async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDelegatedView) {
   const assignSelect = row.querySelector('[data-role="assign"]');
   let currentAssignee = task.assigned_to;
   
@@ -1413,7 +1449,7 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers) {
       task.status = newStatus;
       task.notes = newNotes;
   } else {
-      const activeDate = getTodayStr();
+      const activeDate = (isDelegatedView || activeTab === 'mypending') ? getTodayStr() : selectedLogDate;
       const logPayload = {
         task_id: String(task.id),
         assigned_to: currentAssignee,
@@ -1437,12 +1473,12 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers) {
   }
 }
 
-async function saveAllTasksForDay(el, code, viewRole) {
+async function saveAllTasksForDay(el, code, viewRole, isDelegatedView) {
   const rows = el.querySelectorAll('.task-row');
   if (rows.length === 0) return;
 
   let upsertList = [];
-  const activeDate = getTodayStr();
+  const activeDate = (isDelegatedView || activeTab === 'mypending') ? getTodayStr() : selectedLogDate;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
