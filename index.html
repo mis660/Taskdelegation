@@ -907,7 +907,13 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
       }
       return true;
   }).map(t => {
-    const logEntry = TASK_LOGS.find(l => String(l.task_id) === String(t.id));
+    // FIX: look up the log entry from the full ALL_TASK_LOGS set, filtered
+    // explicitly to activeDateStr — NOT from the global TASK_LOGS variable,
+    // which only reflects whatever date was last picked elsewhere in the
+    // app (e.g. a different date browsed in "My Checklist"). Views that
+    // always want "today" (Pending Tasks, My Delegated Tasks) would
+    // otherwise show a stale status from an unrelated date.
+    const logEntry = ALL_TASK_LOGS.find(l => String(l.task_id) === String(t.id) && l.log_date === activeDateStr);
     
     let displayStatus = 'Not Done';
     let displayNotes = '';
