@@ -326,7 +326,6 @@ let taskFilter = 'All';
 let taskSearchTerm = '';
 let autoRemindQueue = []; 
 
-// Date Logging State: defaults to local today (YYYY-MM-DD)
 let selectedLogDate = new Date().toLocaleDateString('en-CA');
 window.scoreboardDeptFilters = window.scoreboardDeptFilters || [];
 let currentEvalEmp = '';
@@ -347,7 +346,6 @@ async function loadData(){
     const { data: tData } = await supabaseClient.from('tasks').select('*');
     TASKS = tData || [];
     
-    // Load daily task logs for the selected date
     await loadDailyLogs(selectedLogDate);
 
     const { data: eData } = await supabaseClient.from('evaluations').select('*');
@@ -367,7 +365,6 @@ async function loadDailyLogs(dateStr) {
     if (!error) {
       TASK_LOGS = lData || [];
     } else {
-      console.warn("task_logs table might not exist yet:", error.message);
       TASK_LOGS = [];
     }
   } catch(e) { console.error(e); }
@@ -413,15 +410,11 @@ function checkDueTasksQueue() {
 function triggerNextReminder() {
   if (autoRemindQueue.length === 0) { alert("You have 0 tasks in the queue that are Due/Overdue with a Mobile Number attached."); return; }
   
-  // Group by the first user in the queue
   const targetTask = autoRemindQueue[0];
   const targetMobile = targetTask.mobile;
   const targetName = targetTask.assigned_to || 'Team';
 
-  // Extract all overdue tasks for this specific user
   const userTasks = autoRemindQueue.filter(t => t.mobile === targetMobile);
-  
-  // Remove them from the overall queue so they aren't reminded again this session
   autoRemindQueue = autoRemindQueue.filter(t => t.mobile !== targetMobile);
 
   let waText = `🚨 *TASK REMINDER* 🚨\n\nHello ${targetName},\nYou have ${userTasks.length} pending task(s) currently due or overdue:\n\n`;
@@ -433,7 +426,7 @@ function triggerNextReminder() {
   const mobileStr = String(targetMobile).replace(/\D/g,'');
   const waLink = `https://wa.me/${mobileStr}?text=${encodeURIComponent(waText)}`;
   
-  checkDueTasksQueue(); // update UI count 
+  checkDueTasksQueue(); 
   window.open(waLink, '_blank');
 }
 
@@ -786,7 +779,6 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
     list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); 
   }
 
-  // Handle Employee Tabs Sub-filtering (Checklist vs Delegated)
   let titleText = deptDisplayName;
   if (viewRole === 'employee') {
       if (subType === 'checklist') {
@@ -802,21 +794,35 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
   const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
   const isToday = selectedLogDate === getTodayStr();
 
-  // Explicit Historical Status Logging Control
-  let taskDisplayList = list.map(t => {
+  // Explicit Historical Status Logging Control & Global One-Time Logic
+  let taskDisplayList = list.filter(t => {
+      // Hide task entirely if the calendar date is BEFORE the task was even created/started
+      if (t.start_date) {
+          let dStart = new Date(t.start_date);
+          let dSelect = new Date(selectedLogDate);
+          dStart.setHours(0,0,0,0); dSelect.setHours(0,0,0,0);
+          if (dSelect < dStart) return false;
+      }
+      return true;
+  }).map(t => {
     const logEntry = TASK_LOGS.find(l => String(l.task_id) === String(t.id));
     
     let displayStatus = 'Not Done';
     let displayNotes = '';
 
-    if (logEntry) {
-        displayStatus = logEntry.status;
-        displayNotes = logEntry.notes;
-    } else if (isToday) {
-        // Only fallback to the master task status if we are looking at TODAY. 
-        // If they chose a past date and have no log, it definitively implies "Not Done" for that historical date.
+    // If it's a one-time delegated task, use its global status from the main table
+    if (t.frequency === 'One-Time') {
         displayStatus = t.status || 'Not Done';
         displayNotes = t.notes || '';
+    } else {
+        // If it's a daily recurring task, use the calendar date logs
+        if (logEntry) {
+            displayStatus = logEntry.status;
+            displayNotes = logEntry.notes;
+        } else if (isToday) {
+            displayStatus = t.status || 'Not Done';
+            displayNotes = t.notes || '';
+        }
     }
 
     return {
@@ -959,7 +965,7 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
         if(!txt){ showToast('Type a task description first'); return; }
         
         const catValue = document.getElementById('new-task-category').value;
-        const assigned_val = document.getElementById('new-task-assign').value; // Using value from datalist input
+        const assigned_val = document.getElementById('new-task-assign').value; 
         const targetVal = catValue === 'Target / Metric' ? parseFloat(document.getElementById('new-task-target').value || 0) : 0;
         
         const baseTask = {
@@ -1023,14 +1029,15 @@ function taskRowHtml(t, viewRole, deptUsers = []){
   if (cat === 'Check List') catClass = 'badge-checklist';
   if (cat === 'Target / Metric') catClass = 'badge-metric';
 
-  const todayStr = getTodayStr();
   let delayBadge = '';
-  let dueText = t.due_date ? `Due: ${t.due_date}` : '';
+  let dueText = '';
   let dueBadgeClass = 'badge-date';
 
-  if (t.due_date) {
+  // Only calculate running "Overdue by X days" for ONE-TIME tasks
+  if (t.due_date && t.frequency === 'One-Time') {
+      dueText = `Due: ${t.due_date}`;
       let dDue = new Date(t.due_date);
-      let dComp = new Date(todayStr);
+      let dComp = new Date(selectedLogDate); // Calculate based on the view date
       dDue.setHours(0,0,0,0);
       dComp.setHours(0,0,0,0);
       let diffDays = Math.floor((dComp - dDue) / (1000 * 60 * 60 * 24));
@@ -1039,6 +1046,9 @@ function taskRowHtml(t, viewRole, deptUsers = []){
           dueBadgeClass = 'badge-overdue';
           delayBadge = `<span class="badge-overdue" style="margin-left:6px;">Overdue by ${diffDays} day(s)</span>`;
       }
+  } else if (t.frequency !== 'One-Time') {
+      // For daily tasks, hide the massive overdue badge. It's just a daily routine.
+      dueText = 'Daily Routine';
   }
 
   const employeeAssignedBadge = (viewRole === 'employee' && t.assigned_to) ? `<span class="assigned-badge">${escapeHtml(t.assigned_to)}</span>` : '';
@@ -1060,7 +1070,6 @@ function taskRowHtml(t, viewRole, deptUsers = []){
             <option value="On Leave" ${currentStatus==='On Leave'?'selected':''}>On Leave</option>
           `;
       } else {
-          // Delegated Task Workflow
           if (currentStatus === 'Done') {
               statusOptions = `<option value="Done" selected disabled>Done (Approved)</option>`;
           } else {
@@ -1072,7 +1081,6 @@ function taskRowHtml(t, viewRole, deptUsers = []){
           }
       }
   } else {
-      // Admins/HODs see the full workflow
       if (cat === 'Check List') {
           statusOptions = `
             <option value="Not Done" ${currentStatus==='Not Done' || currentStatus==='Pending' ? 'selected':''}>Not Done</option>
@@ -1090,7 +1098,6 @@ function taskRowHtml(t, viewRole, deptUsers = []){
   }
 
   let controlsHtml = '';
-  // Only lock inputs if it's an approved delegated task. Checklists remain editable.
   const isEmployeeLocked = (currentStatus === 'Done' && viewRole === 'employee' && cat !== 'Check List');
   const disabledAttr = isEmployeeLocked ? 'disabled style="background:#f1f5f9; cursor:not-allowed;"' : '';
   const saveBtnDisplay = isEmployeeLocked ? 'style="display:none;"' : '';
@@ -1123,13 +1130,13 @@ function taskRowHtml(t, viewRole, deptUsers = []){
         <span class="badge-category ${catClass}">${cat}</span>
         ${t.frequency ? `<span class="badge-frequency">🔁 ${t.frequency}</span>` : ''}
         <span class="badge-priority ${priClass}">${t.priority || 'Medium'}</span>
-        ${t.due_date ? `<span class="${dueBadgeClass}">${dueText}</span>${delayBadge}` : ''}
+        ${dueText ? `<span class="${dueBadgeClass}">${dueText}</span>${delayBadge}` : ''}
         ${currentStatus === 'Done' ? `<span class="badge-checklist" style="background:#dcfce7; color:#16a34a; border-color:#bbf7d0;">✔ ${cat === 'Check List' ? 'Done' : 'Approved'} for${selectedLogDate}</span>` : ''}
       </div>
       <div class="meta">
         ${employeeAssignedBadge}
         ${t.start_date ? `<span>Start: ${t.start_date}</span>` : ''}
-        ${t.due_date ? `<span>Due: ${t.due_date}</span>` : ''}
+        ${t.due_date && t.frequency === 'One-Time' ? `<span>Original Due: ${t.due_date}</span>` : ''}
         ${t.updated_by ? `<span>(Last modified by ${escapeHtml(t.updated_by)})</span>` : ''}
       </div>
     </div>
@@ -1168,7 +1175,6 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers, subType){
           const achievedVal = parseFloat(newNotes) || 0;
           
           if (achievedVal >= targetScore && targetScore > 0) {
-              // Employee triggers review, Admin triggers immediate done
               newStatus = viewRole === 'employee' ? 'Pending Review' : 'Done';
           } else {
               newStatus = 'Not Done';
@@ -1203,7 +1209,6 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers, subType){
   });
 }
 
-// Single task date-wise log upsert
 async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers) {
   const assignSelect = row.querySelector('[data-role="assign"]');
   let currentAssignee = task.assigned_to;
@@ -1222,42 +1227,64 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers) {
     }
   }
 
-  const logPayload = {
-    task_id: String(task.id),
-    assigned_to: currentAssignee,
-    log_date: selectedLogDate,
-    status: newStatus,
-    notes: newNotes,
-    updated_by: currentUser.name,
-    updated_at: new Date().toISOString()
-  };
+  // If ONE-TIME, update global master table, NOT just the daily calendar log
+  if (task.frequency === 'One-Time') {
+      const { error } = await supabaseClient.from('tasks').update({
+          status: newStatus,
+          notes: newNotes,
+          updated_by: currentUser.name,
+          updated_at: new Date().toISOString()
+      }).eq('id', task.id);
+      
+      if (!error) {
+          task.status = newStatus;
+          task.notes = newNotes;
+      } else {
+          console.error("Error saving global task:", error);
+      }
+  } else {
+      // If DAILY recurring, update the date-specific calendar log
+      const logPayload = {
+        task_id: String(task.id),
+        assigned_to: currentAssignee,
+        log_date: selectedLogDate,
+        status: newStatus,
+        notes: newNotes,
+        updated_by: currentUser.name,
+        updated_at: new Date().toISOString()
+      };
 
-  const { error } = await supabaseClient
-    .from('task_logs')
-    .upsert(logPayload, { onConflict: 'task_id, log_date' });
+      const { error } = await supabaseClient
+        .from('task_logs')
+        .upsert(logPayload, { onConflict: 'task_id, log_date' });
 
-  if (error) {
-    console.error("Error saving log, falling back to master table:", error);
-    await supabaseClient.from('tasks').update({
-      status: newStatus,
-      notes: newNotes,
-      updated_by: currentUser.name,
-      updated_at: new Date().toISOString()
-    }).eq('id', task.id);
+      if (error) {
+        console.error("Error saving daily log:", error);
+      }
+      
+      // Keep master table mildly updated if saved on "Today" for general fallback
+      if (selectedLogDate === getTodayStr()) {
+          await supabaseClient.from('tasks').update({
+              status: newStatus,
+              notes: newNotes,
+              updated_by: currentUser.name,
+              updated_at: new Date().toISOString()
+          }).eq('id', task.id);
+      }
   }
 }
 
-// Bulk Save All for the selected day
 async function saveAllTasksForDay(el, code, viewRole) {
   const rows = el.querySelectorAll('.task-row');
   if (rows.length === 0) return;
 
   let upsertList = [];
 
-  rows.forEach(row => {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
     const id = row.dataset.id;
     const task = TASKS.find(t => String(t.id) === String(id));
-    if (!task) return;
+    if (!task) continue;
 
     const select = row.querySelector('[data-role="status"]');
     let newStatus = select ? select.value : 'Not Done';
@@ -1279,29 +1306,42 @@ async function saveAllTasksForDay(el, code, viewRole) {
       newNotes = noteInput ? noteInput.value : '';
     }
 
-    upsertList.push({
-      task_id: String(task.id),
-      assigned_to: task.assigned_to,
-      log_date: selectedLogDate,
-      status: newStatus,
-      notes: newNotes,
-      updated_by: currentUser.name,
-      updated_at: new Date().toISOString()
-    });
-  });
-
-  const { error } = await supabaseClient
-    .from('task_logs')
-    .upsert(upsertList, { onConflict: 'task_id, log_date' });
-
-  if (error) {
-    alert("Error saving: " + error.message);
-  } else {
-    showToast(`All tasks saved for ${selectedLogDate}!`);
-    await loadDailyLogs(selectedLogDate);
-    // Since we don't strictly pass subtype down for bulk save, we reload based on active view logic
-    renderContent(); 
+    if (task.frequency === 'One-Time') {
+        await supabaseClient.from('tasks').update({
+            status: newStatus,
+            notes: newNotes,
+            updated_by: currentUser.name,
+            updated_at: new Date().toISOString()
+        }).eq('id', task.id);
+        task.status = newStatus;
+        task.notes = newNotes;
+    } else {
+        upsertList.push({
+          task_id: String(task.id),
+          assigned_to: task.assigned_to,
+          log_date: selectedLogDate,
+          status: newStatus,
+          notes: newNotes,
+          updated_by: currentUser.name,
+          updated_at: new Date().toISOString()
+        });
+    }
   }
+
+  if (upsertList.length > 0) {
+      const { error } = await supabaseClient
+        .from('task_logs')
+        .upsert(upsertList, { onConflict: 'task_id, log_date' });
+
+      if (error) {
+        alert("Error saving daily logs: " + error.message);
+        return;
+      }
+  }
+
+  showToast(`All tasks saved for ${selectedLogDate}!`);
+  await loadDailyLogs(selectedLogDate);
+  renderContent(); 
 }
 
 /* ---------------- ADMIN CONTROL (DEPARTMENTS & USERS) ---------------- */
