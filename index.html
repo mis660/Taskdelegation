@@ -516,9 +516,9 @@ function renderShell(){
   if(currentUser.role === 'admin'){
     tabs = [{id:'overview', label:'Overview'}, {id:'alltasks', label:'All Tasks'}, {id:'scoreboard', label:'📊 Scoreboard'}, {id:'users', label:'Admin Control'}];
   } else if (currentUser.role === 'hod') {
-    tabs = [{id:'scoreboard', label:'📊 Scoreboard'}, {id:'depttasks', label:'Dept Tasks (HOD)'}, {id:'mychecklist', label:'My Checklist'}, {id:'mytasks', label:'My Delegated Tasks'}];
+    tabs = [{id:'scoreboard', label:'📊 Scoreboard'}, {id:'mypending', label:'⏳ Pending Tasks'}, {id:'depttasks', label:'Dept Tasks (HOD)'}, {id:'mychecklist', label:'My Checklist'}, {id:'mytasks', label:'My Delegated Tasks'}];
   } else {
-    tabs = [{id:'scoreboard', label:'📊 Scoreboard'}, {id:'mychecklist', label:'My Checklist'}, {id:'mytasks', label:'My Delegated Tasks'}];
+    tabs = [{id:'scoreboard', label:'📊 Scoreboard'}, {id:'mypending', label:'⏳ Pending Tasks'}, {id:'mychecklist', label:'My Checklist'}, {id:'mytasks', label:'My Delegated Tasks'}];
   }
 
   tabsEl.innerHTML = tabs.map(t=>`<div class="tab ${activeTab===t.id?'active':''}" data-tab="${t.id}">${t.label}</div>`).join('');
@@ -545,6 +545,7 @@ function renderContent(){
   if(activeTab === 'depttasks') return renderDeptTasks(el, currentUser.department, 'hod', 'all');
   if(activeTab === 'mychecklist') return renderDeptTasks(el, currentUser.department, 'employee', 'checklist');
   if(activeTab === 'mytasks') return renderDeptTasks(el, currentUser.department, 'employee', 'delegated');
+  if(activeTab === 'mypending') return renderDeptTasks(el, currentUser.department, 'employee', 'pending');
 }
 
 /* ---------------- GEM METER & HELPER FUNCTIONS ---------------- */
@@ -562,8 +563,22 @@ function gemSvg(pct){
 function pctClass(p){ return p>=70?'pct-high':(p>=35?'pct-mid':'pct-low'); }
 function barColor(p){ return p>=70?'var(--emerald-600)':(p>=35?'var(--gold-500)':'var(--clay-600)'); }
 
+// Normalizes a department string for comparison: lowercase, no whitespace.
+// Used so a task's department field matches its department's code OR name
+// even if casing/spacing differs (this mirrors the normalization already
+// used elsewhere in the app, e.g. the deptUsers and scoreboard filters).
+function normDept(s){ return (s || '').toString().trim().toLowerCase().replace(/\s+/g, ''); }
+
 function deptStats(code){
-  const list = TASKS.filter(t=>t.department===code);
+  const dept = DEPARTMENTS.find(d => d.code === code) || { code, name: code };
+  const targetCode = normDept(dept.code);
+  const targetName = normDept(dept.name);
+
+  const list = TASKS.filter(t => {
+    const td = normDept(t.department);
+    return td === targetCode || td === targetName;
+  });
+
   const done = list.filter(t=>{
     const s = getEffectiveStatus(t);
     return s === 'Done' || s === 'Pending Review';
@@ -848,14 +863,20 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
   const safeCode = currentDept.code;
   const deptDisplayName = currentDept.name;
 
-  let list = TASKS.filter(t => t.department === safeCode || t.department === currentDept.name);
+  let list = TASKS.filter(t => {
+    const td = normDept(t.department);
+    return td === normDept(safeCode) || td === normDept(currentDept.name);
+  });
   
   if (viewRole === 'employee') { 
     list = list.filter(t => t.assigned_to && t.assigned_to.toLowerCase() === currentUser.name.toLowerCase()); 
   }
 
   let titleText = deptDisplayName;
-  const isDelegatedView = (viewRole === 'employee' && subType === 'delegated');
+  // "Persistent, today-only" views: My Delegated Tasks (no date picker, always today)
+  // and the new Pending Tasks tab (also always today, and always across every category).
+  const isDelegatedView = (viewRole === 'employee' && (subType === 'delegated' || subType === 'pending'));
+  const isPendingView = (viewRole === 'employee' && subType === 'pending');
   
   if (viewRole === 'employee') {
       if (subType === 'checklist') {
@@ -864,6 +885,11 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
       } else if (subType === 'delegated') {
           list = list.filter(t => t.category !== 'Check List' && t.category !== 'Daily Task');
           titleText = 'My Delegated Tasks';
+      } else if (subType === 'pending') {
+          // Pending view intentionally includes every category (checklist,
+          // delegated, target/metric) so the user has one place to see
+          // everything still requiring their action, for today.
+          titleText = '⏳ Pending Tasks';
       }
   }
 
@@ -913,7 +939,25 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
     );
   }
 
-  if (taskFilter !== 'All') {
+  if (isPendingView) {
+    // Hard filter: only tasks that still need the user's action today.
+    // "Pending Review" is excluded — the employee already submitted that
+    // one and it's now sitting with their manager, not something for
+    // them to complete.
+    taskDisplayList = taskDisplayList.filter(t => t.currentStatus === 'Not Done' || t.currentStatus === 'Pending');
+
+    // Sort so the most urgent items float to the top: High priority first,
+    // then earliest due date, then tasks with no due date last.
+    const priorityRank = { High: 0, Medium: 1, Low: 2 };
+    taskDisplayList.sort((a, b) => {
+      const pa = priorityRank[a.priority || 'Medium'] ?? 1;
+      const pb = priorityRank[b.priority || 'Medium'] ?? 1;
+      if (pa !== pb) return pa - pb;
+      const da = a.due_date || '9999-99-99';
+      const db = b.due_date || '9999-99-99';
+      return da.localeCompare(db);
+    });
+  } else if (taskFilter !== 'All') {
     if (taskFilter === 'Not Done') {
       taskDisplayList = taskDisplayList.filter(t => t.currentStatus === 'Not Done' || t.currentStatus === 'Pending');
     } else {
@@ -928,7 +972,17 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
     return uDept === cDept || u.department === currentDept.name;
   });
 
-  const dateBarHtml = isDelegatedView ? `
+  const dateBarHtml = isPendingView ? `
+    <div class="date-bar">
+      <div class="date-bar-left">
+        <span style="font-size:13px; font-weight:700; color:var(--clay-600);">🔴 Everything still open — as of today, ${getTodayStr()}</span>
+      </div>
+      <div class="date-bar-right">
+        <button class="btn btn-save-all btn-sm" id="save-all-btn">💾 Save All</button>
+        <input type="text" class="search-input" id="task-search-input" placeholder="Search tasks..." value="${escapeAttr(taskSearchTerm)}">
+      </div>
+    </div>
+  ` : isDelegatedView ? `
     <div class="date-bar">
       <div class="date-bar-left">
         <span style="font-size:13px; font-weight:700; color:var(--emerald-800);">🎯 Persistent Master Task List</span>
@@ -1003,15 +1057,15 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
 
   el.innerHTML = `
     ${viewRole === 'admin' ? `<div class="back-link" id="back-to-all">← Back to all departments</div>` : ''}
-    <div class="section-head"><div><h2>${titleText}</h2><div class="desc">${taskDisplayList.length} tasks on file for this view</div></div></div>
+    <div class="section-head"><div><h2>${titleText}</h2><div class="desc">${isPendingView ? `${taskDisplayList.length} task(s) still need your action, sorted by priority & due date` : `${taskDisplayList.length} tasks on file for this view`}</div></div></div>
     
     ${dateBarHtml}
 
-    <div class="filter-row">
+    ${isPendingView ? '' : `<div class="filter-row">
       ${['All','Not Done','Pending Review','Done','On Leave'].map(f=>`<div class="chip ${taskFilter===f?'active':''}" data-f="${f}">${f}</div>`).join('')}
-    </div>
+    </div>`}
     
-    <div id="task-list">${taskDisplayList.length ? taskDisplayList.map(t=>taskRowHtml(t, viewRole, deptUsers, isDelegatedView)).join('') : '<div class="empty-note">No tasks match this filter or search query.</div>'}</div>
+    <div id="task-list">${taskDisplayList.length ? taskDisplayList.map(t=>taskRowHtml(t, viewRole, deptUsers, isDelegatedView)).join('') : (isPendingView ? '<div class="empty-note">🎉 All caught up! Nothing pending right now.</div>' : '<div class="empty-note">No tasks match this filter or search query.</div>')}</div>
 
     ${addTaskHtml}
   `;
