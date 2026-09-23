@@ -349,10 +349,6 @@ async function loadData(){
     
     await loadDailyLogs(selectedLogDate);
 
-    // NEW: pull every log entry, across every date, for every task.
-    // This is what lets scoring reflect real completions instead of a
-    // master "tasks.status" field that only used to get refreshed
-    // when a save happened to land on today's date.
     await loadAllTaskLogs();
 
     const { data: eData } = await supabaseClient.from('evaluations').select('*');
@@ -377,8 +373,6 @@ async function loadDailyLogs(dateStr) {
   } catch(e) { console.error(e); }
 }
 
-// NEW: fetch every task_logs row so scoring can find each task's latest
-// real status regardless of which date it was saved under.
 async function loadAllTaskLogs() {
   try {
     const { data, error } = await supabaseClient.from('task_logs').select('*');
@@ -389,10 +383,6 @@ async function loadAllTaskLogs() {
   }
 }
 
-// NEW: resolve a task's true current status.
-// - One-Time tasks: master tasks.status is the source of truth (unchanged behaviour).
-// - Recurring tasks: the most recent task_logs row (by log_date, then updated_at)
-//   is the source of truth, because that's where day-to-day completions are stored.
 function getEffectiveStatus(task){
   if (task.frequency === 'One-Time') {
     return task.status || 'Not Done';
@@ -516,9 +506,9 @@ function renderShell(){
   if(currentUser.role === 'admin'){
     tabs = [{id:'overview', label:'Overview'}, {id:'alltasks', label:'All Tasks'}, {id:'scoreboard', label:'📊 Scoreboard'}, {id:'users', label:'Admin Control'}];
   } else if (currentUser.role === 'hod') {
-    tabs = [{id:'scoreboard', label:'📊 Scoreboard'}, {id:'mypending', label:'⏳ Pending Tasks'}, {id:'depttasks', label:'Dept Tasks (HOD)'}, {id:'mychecklist', label:'My Checklist'}, {id:'mytasks', label:'My Delegated Tasks'}];
+    tabs = [{id:'scoreboard', label:'📊 Scoreboard'}, {id:'mypending', label:'⏳ Pending Tasks'}, {id:'depttasks', label:'Dept Tasks (HOD)'}, {id:'mychecklist', label:'My Checklist & Targets'}, {id:'mytasks', label:'My Delegated Tasks'}];
   } else {
-    tabs = [{id:'scoreboard', label:'📊 Scoreboard'}, {id:'mypending', label:'⏳ Pending Tasks'}, {id:'mychecklist', label:'My Checklist'}, {id:'mytasks', label:'My Delegated Tasks'}];
+    tabs = [{id:'scoreboard', label:'📊 Scoreboard'}, {id:'mypending', label:'⏳ Pending Tasks'}, {id:'mychecklist', label:'My Checklist & Targets'}, {id:'mytasks', label:'My Delegated Tasks'}];
   }
 
   tabsEl.innerHTML = tabs.map(t=>`<div class="tab ${activeTab===t.id?'active':''}" data-tab="${t.id}">${t.label}</div>`).join('');
@@ -527,14 +517,6 @@ function renderShell(){
         activeTab = el.dataset.tab; 
         if(activeTab!=='alltasks') activeDeptCode = currentUser.role==='admin'? activeDeptCode : currentUser.department; 
 
-        // FIX: date-driven views (My Checklist / Dept Tasks / All Tasks)
-        // were keeping whatever date was last picked via the date picker,
-        // even after switching away and back to a different tab. That let
-        // a stale historical date (e.g. Sept 3) silently persist and
-        // confusingly show "Not Done" for days no one ever meant to be
-        // looking at. Reset to today on every tab switch — the user can
-        // still deliberately pick another date using the date picker
-        // inside that view for that session.
         const today = getTodayStr();
         if (selectedLogDate !== today) {
             selectedLogDate = today;
@@ -580,10 +562,6 @@ function gemSvg(pct){
 function pctClass(p){ return p>=70?'pct-high':(p>=35?'pct-mid':'pct-low'); }
 function barColor(p){ return p>=70?'var(--emerald-600)':(p>=35?'var(--gold-500)':'var(--clay-600)'); }
 
-// Normalizes a department string for comparison: lowercase, no whitespace.
-// Used so a task's department field matches its department's code OR name
-// even if casing/spacing differs (this mirrors the normalization already
-// used elsewhere in the app, e.g. the deptUsers and scoreboard filters).
 function normDept(s){ return (s || '').toString().trim().toLowerCase().replace(/\s+/g, ''); }
 
 function deptStats(code){
@@ -640,15 +618,12 @@ function renderScoreboard(el){
   let empRows = evalUsers.map(u => {
     let evalData = latestEvals[u.name];
     
-    // Auto-calculate the 65% base score off each task's EFFECTIVE status,
-    // which correctly reflects task_logs for recurring tasks instead of
-    // only trusting the master tasks.status field.
     let myTasks = TASKS.filter(t => {
         if (t.assigned_to !== u.name) return false;
         if (t.start_date) {
             let sDate = new Date(t.start_date);
             sDate.setHours(0,0,0,0);
-            if (sDate > todayVal) return false; // Ignore future tasks
+            if (sDate > todayVal) return false; 
         }
         return true;
     });
@@ -660,7 +635,6 @@ function renderScoreboard(el){
     let total = myTasks.length;
     let autoScore = total > 0 ? (completed / total) * 65 : 0;
 
-    // Apply manager's remaining 35% manual evaluations if available
     let managerScore = evalData ? (parseFloat(evalData.goals_score || 0) + parseFloat(evalData.attendance_score || 0) + parseFloat(evalData.behaviour_score || 0)) : 0;
     
     let totalScore = Math.round(autoScore + managerScore);
@@ -772,8 +746,6 @@ function openEvalModal(empName) {
         return true;
     });
 
-    // Same fix as the scoreboard: use effective status (task_logs-aware),
-    // not the possibly-stale master tasks.status field.
     let completed = myTasks.filter(t => {
         const s = getEffectiveStatus(t);
         return s === 'Done' || s === 'Pending Review';
@@ -890,22 +862,17 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
   }
 
   let titleText = deptDisplayName;
-  // "Persistent, today-only" views: My Delegated Tasks (no date picker, always today)
-  // and the new Pending Tasks tab (also always today, and always across every category).
   const isDelegatedView = (viewRole === 'employee' && (subType === 'delegated' || subType === 'pending'));
   const isPendingView = (viewRole === 'employee' && subType === 'pending');
   
   if (viewRole === 'employee') {
       if (subType === 'checklist') {
-          list = list.filter(t => t.category === 'Check List' || t.category === 'Daily Task');
-          titleText = 'My Checklist';
+          list = list.filter(t => t.category === 'Check List' || t.category === 'Daily Task' || t.category === 'Target / Metric');
+          titleText = 'My Checklist & Targets';
       } else if (subType === 'delegated') {
-          list = list.filter(t => t.category !== 'Check List' && t.category !== 'Daily Task');
+          list = list.filter(t => t.category !== 'Check List' && t.category !== 'Daily Task' && t.category !== 'Target / Metric');
           titleText = 'My Delegated Tasks';
       } else if (subType === 'pending') {
-          // Pending view intentionally includes every category (checklist,
-          // delegated, target/metric) so the user has one place to see
-          // everything still requiring their action, for today.
           titleText = '⏳ Pending Tasks';
       }
   }
@@ -916,20 +883,13 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
   const isToday = activeDateStr === getTodayStr();
 
   let taskDisplayList = list.filter(t => {
-      if (t.start_date) {
-          let dStart = new Date(t.start_date);
-          let dSelect = new Date(activeDateStr);
-          dStart.setHours(0,0,0,0); dSelect.setHours(0,0,0,0);
-          if (dSelect < dStart) return false;
-      }
+      const anchorDateStr = t.start_date || getTodayStr();
+      let dStart = new Date(anchorDateStr);
+      let dSelect = new Date(activeDateStr);
+      dStart.setHours(0,0,0,0); dSelect.setHours(0,0,0,0);
+      if (dSelect < dStart) return false;
       return true;
   }).map(t => {
-    // FIX: look up the log entry from the full ALL_TASK_LOGS set, filtered
-    // explicitly to activeDateStr — NOT from the global TASK_LOGS variable,
-    // which only reflects whatever date was last picked elsewhere in the
-    // app (e.g. a different date browsed in "My Checklist"). Views that
-    // always want "today" (Pending Tasks, My Delegated Tasks) would
-    // otherwise show a stale status from an unrelated date.
     const logEntry = ALL_TASK_LOGS.find(l => String(l.task_id) === String(t.id) && l.log_date === activeDateStr);
     
     let displayStatus = 'Not Done';
@@ -963,14 +923,8 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
   }
 
   if (isPendingView) {
-    // Hard filter: only tasks that still need the user's action today.
-    // "Pending Review" is excluded — the employee already submitted that
-    // one and it's now sitting with their manager, not something for
-    // them to complete.
     taskDisplayList = taskDisplayList.filter(t => t.currentStatus === 'Not Done' || t.currentStatus === 'Pending');
 
-    // Sort so the most urgent items float to the top: High priority first,
-    // then earliest due date, then tasks with no due date last.
     const priorityRank = { High: 0, Medium: 1, Low: 2 };
     taskDisplayList.sort((a, b) => {
       const pa = priorityRank[a.priority || 'Medium'] ?? 1;
@@ -1071,7 +1025,7 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
           <input type="number" id="new-task-target" placeholder="Enter target amount..." style="width:100%; padding:10px; border:1px solid var(--line); border-radius:7px;">
         </div>
         <div class="row">
-          <div><label>Start Date</label><input type="date" id="new-task-start"></div>
+          <div><label>Start Date</label><input type="date" id="new-task-start" value="${getTodayStr()}"></div>
           <div><label>Due Date</label><input type="date" id="new-task-due"></div>
           <div style="display:flex; align-items:flex-end;"><button class="btn btn-gold" id="add-task-btn" style="width:100%; height:40px;">+ Add Task</button></div>
         </div>
@@ -1138,7 +1092,7 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
           frequency: document.getElementById('new-task-frequency').value,
           priority: document.getElementById('new-task-priority').value,
           score: targetVal,
-          start_date: document.getElementById('new-task-start').value || null,
+          start_date: document.getElementById('new-task-start').value || getTodayStr(),
           due_date: document.getElementById('new-task-due').value || null,
           end_date: null,
           status: 'Not Done',
@@ -1224,7 +1178,7 @@ function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
 
   let statusOptions = '';
   if (viewRole === 'employee') {
-      if (cat === 'Check List') {
+      if (cat === 'Check List' || cat === 'Target / Metric') {
           statusOptions = `
             <option value="Not Done" ${currentStatus==='Not Done' || currentStatus==='Pending' ? 'selected':''}>Not Done</option>
             <option value="Done" ${currentStatus==='Done'?'selected':''}>Done</option>
@@ -1242,7 +1196,7 @@ function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
           }
       }
   } else {
-      if (cat === 'Check List') {
+      if (cat === 'Check List' || cat === 'Target / Metric') {
           statusOptions = `
             <option value="Not Done" ${currentStatus==='Not Done' || currentStatus==='Pending' ? 'selected':''}>Not Done</option>
             <option value="Done" ${currentStatus==='Done'?'selected':''}>Done</option>
@@ -1259,7 +1213,7 @@ function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
   }
 
   let controlsHtml = '';
-  const isEmployeeLocked = (currentStatus === 'Done' && viewRole === 'employee' && cat !== 'Check List');
+  const isEmployeeLocked = (currentStatus === 'Done' && viewRole === 'employee' && cat === 'Delegated Task');
   const disabledAttr = isEmployeeLocked ? 'disabled style="background:#f1f5f9; cursor:not-allowed;"' : '';
   const saveBtnDisplay = isEmployeeLocked ? 'style="display:none;"' : '';
   
@@ -1292,7 +1246,7 @@ function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
         ${t.frequency ? `<span class="badge-frequency">🔁 ${t.frequency}</span>` : ''}
         <span class="badge-priority ${priClass}">${t.priority || 'Medium'}</span>
         ${dueText ? `<span class="${dueBadgeClass}">${dueText}</span>${delayBadge}` : ''}
-        ${currentStatus === 'Done' ? `<span class="badge-checklist" style="background:#dcfce7; color:#16a34a; border-color:#bbf7d0;">✔ ${cat === 'Check List' ? 'Done' : 'Approved'}</span>` : ''}
+        ${currentStatus === 'Done' ? `<span class="badge-checklist" style="background:#dcfce7; color:#16a34a; border-color:#bbf7d0;">✔ ${cat === 'Delegated Task' ? 'Approved' : 'Done'}</span>` : ''}
       </div>
       <div class="meta">
         ${employeeAssignedBadge}
@@ -1336,7 +1290,7 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers, subType, isDelegatedVi
           const achievedVal = parseFloat(newNotes) || 0;
           
           if (achievedVal >= targetScore && targetScore > 0) {
-              newStatus = viewRole === 'employee' ? 'Pending Review' : 'Done';
+              newStatus = 'Done';
           } else {
               newStatus = 'Not Done';
           }
@@ -1413,11 +1367,6 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDe
 
       await supabaseClient.from('task_logs').upsert(logPayload, { onConflict: 'task_id, log_date' });
 
-      // FIX: keep the master tasks.status/notes in sync with whatever was just
-      // logged, regardless of which date it was for (not just "today").
-      // Scoring now reads getEffectiveStatus() (which is log-aware) as the
-      // real source of truth, so this update is just a display-cache refresh —
-      // but it also keeps admin dashboards and WhatsApp reminder logic sane.
       task.status = newStatus;
       task.notes = newNotes;
       await supabaseClient.from('tasks').update({
@@ -1453,7 +1402,7 @@ async function saveAllTasksForDay(el, code, viewRole, isDelegatedView) {
       const achievedVal = parseFloat(newNotes) || 0;
       
       if (achievedVal >= targetScore && targetScore > 0) {
-          newStatus = viewRole === 'employee' ? 'Pending Review' : 'Done';
+          newStatus = 'Done';
       } else {
           newStatus = 'Not Done';
       }
@@ -1482,9 +1431,6 @@ async function saveAllTasksForDay(el, code, viewRole, isDelegatedView) {
           updated_at: new Date().toISOString()
         });
 
-        // FIX: always sync the master row to the freshly-logged status/notes,
-        // not just when activeDate === today. Kept as a background write so
-        // "Save All" stays fast; scoring itself relies on getEffectiveStatus().
         task.status = newStatus;
         task.notes = newNotes;
         supabaseClient.from('tasks').update({
