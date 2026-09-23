@@ -523,9 +523,26 @@ function renderShell(){
 
   tabsEl.innerHTML = tabs.map(t=>`<div class="tab ${activeTab===t.id?'active':''}" data-tab="${t.id}">${t.label}</div>`).join('');
   tabsEl.querySelectorAll('.tab').forEach(el=>{
-    el.addEventListener('click', ()=>{ 
+    el.addEventListener('click', async ()=>{ 
         activeTab = el.dataset.tab; 
         if(activeTab!=='alltasks') activeDeptCode = currentUser.role==='admin'? activeDeptCode : currentUser.department; 
+
+        // FIX: date-driven views (My Checklist / Dept Tasks / All Tasks)
+        // were keeping whatever date was last picked via the date picker,
+        // even after switching away and back to a different tab. That let
+        // a stale historical date (e.g. Sept 3) silently persist and
+        // confusingly show "Not Done" for days no one ever meant to be
+        // looking at. Reset to today on every tab switch — the user can
+        // still deliberately pick another date using the date picker
+        // inside that view for that session.
+        const today = getTodayStr();
+        if (selectedLogDate !== today) {
+            selectedLogDate = today;
+            await loadDailyLogs(selectedLogDate);
+        }
+        taskFilter = 'All';
+        taskSearchTerm = '';
+
         renderContent(); 
         renderShell(); 
     });
