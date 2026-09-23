@@ -399,6 +399,7 @@ async function loadAllTaskLogs() {
   }
 }
 
+// Fixed getEffectiveStatus with strong defensive checks
 function getEffectiveStatus(task){
   try {
       if (!task) return 'Not Done';
@@ -653,6 +654,7 @@ function renderScoreboard(el){
             if (!t || t.assigned_to !== u.name) return false;
             if (t.start_date) {
                 let sDate = new Date(t.start_date);
+                if (isNaN(sDate.valueOf())) sDate = new Date();
                 sDate.setHours(0,0,0,0);
                 if (sDate > todayVal) return false; 
             }
@@ -784,6 +786,7 @@ function openEvalModal(empName) {
         if (!t || t.assigned_to !== empName) return false;
         if (t.start_date) {
             let sDate = new Date(t.start_date);
+            if (isNaN(sDate.valueOf())) sDate = new Date();
             sDate.setHours(0,0,0,0);
             if (sDate > todayVal) return false; 
         }
@@ -957,18 +960,23 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
           }
       }
 
-      // Restore the Date Picker logic specifically for views that need it (Checklist / Dept Tasks)
-      // while keeping Pending & Delegated locked to "Today".
+      // Restore Date Picker only for Checklists / General Dept view
       const activeDateStr = (isDelegatedView || isPendingView) ? getTodayStr() : selectedLogDate;
-      const dateObj = new Date(activeDateStr + 'T00:00:00');
+      let dateObj = new Date(activeDateStr + 'T00:00:00');
+      if (isNaN(dateObj.valueOf())) dateObj = new Date();
       const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
       const isToday = activeDateStr === getTodayStr();
 
       let taskDisplayList = list.filter(t => {
           const anchorDateStr = t.start_date || getTodayStr();
           let dStart = new Date(anchorDateStr);
+          if (isNaN(dStart.valueOf())) dStart = new Date();
+          
           let dSelect = new Date(activeDateStr);
-          dStart.setHours(0,0,0,0); dSelect.setHours(0,0,0,0);
+          if (isNaN(dSelect.valueOf())) dSelect = new Date();
+          
+          dStart.setHours(0,0,0,0); 
+          dSelect.setHours(0,0,0,0);
           if (dSelect < dStart) return false;
           return true;
       }).map(t => {
@@ -1247,13 +1255,16 @@ function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
       dueText = `Due: ${t.due_date}`;
       let dDue = new Date(t.due_date);
       let dComp = new Date(isDelegatedView || activeTab === 'mypending' ? getTodayStr() : selectedLogDate);
-      dDue.setHours(0,0,0,0);
-      dComp.setHours(0,0,0,0);
-      let diffDays = Math.floor((dComp - dDue) / (1000 * 60 * 60 * 24));
       
-      if (diffDays > 0 && currentStatus !== 'Done') {
-          dueBadgeClass = 'badge-overdue';
-          delayBadge = `<span class="badge-overdue" style="margin-left:6px;">Overdue by ${diffDays} day(s)</span>`;
+      if (!isNaN(dDue.valueOf()) && !isNaN(dComp.valueOf())) {
+          dDue.setHours(0,0,0,0);
+          dComp.setHours(0,0,0,0);
+          let diffDays = Math.floor((dComp - dDue) / (1000 * 60 * 60 * 24));
+          
+          if (diffDays > 0 && currentStatus !== 'Done') {
+              dueBadgeClass = 'badge-overdue';
+              delayBadge = `<span class="badge-overdue" style="margin-left:6px;">Overdue by ${diffDays} day(s)</span>`;
+          }
       }
   } else if (t.frequency !== 'One-Time') {
       dueText = 'Daily Routine';
