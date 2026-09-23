@@ -317,8 +317,8 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let DEPARTMENTS = [];
 let USERS = [];
 let TASKS = [];
-let TASK_LOGS = [];      // logs for the currently-selected view date only (used for the date-wise dept view)
-let ALL_TASK_LOGS = [];  // NEW: every log across every date/task (used for accurate scoring)
+let TASK_LOGS = [];
+let ALL_TASK_LOGS = [];
 let EVALUATIONS = [];
 let currentUser = null;
 let activeTab = 'scoreboard';
@@ -330,6 +330,23 @@ let autoRemindQueue = [];
 let selectedLogDate = new Date().toLocaleDateString('en-CA');
 window.scoreboardDeptFilters = window.scoreboardDeptFilters || [];
 let currentEvalEmp = '';
+
+// ==========================================
+// ROBUST CATEGORY PARSERS
+// ==========================================
+function isChecklistCat(cat) {
+  if (!cat) return false;
+  let c = String(cat).toUpperCase();
+  return c.includes('CHECK') || c.includes('DAILY');
+}
+function isTargetCat(cat) {
+  if (!cat) return false;
+  let c = String(cat).toUpperCase();
+  return c.includes('TARGET') || c.includes('METRIC');
+}
+function isDelegatedCat(cat) {
+  return !isChecklistCat(cat) && !isTargetCat(cat);
+}
 
 function getTodayStr() {
   return new Date().toLocaleDateString('en-CA');
@@ -348,7 +365,6 @@ async function loadData(){
     TASKS = tData || [];
     
     await loadDailyLogs(selectedLogDate);
-
     await loadAllTaskLogs();
 
     const { data: eData } = await supabaseClient.from('evaluations').select('*');
@@ -547,41 +563,6 @@ function renderContent(){
   if(activeTab === 'mypending') return renderDeptTasks(el, currentUser.department, 'employee', 'pending');
 }
 
-/* ---------------- GEM METER & HELPER FUNCTIONS ---------------- */
-function gemSvg(pct){
-  const clr = pct >= 70 ? 'var(--emerald-600)' : pct >= 35 ? 'var(--gold-500)' : 'var(--clay-600)';
-  const h = Math.max(4, pct);
-  return `<svg viewBox="0 0 44 44">
-    <defs><clipPath id="clip-${Math.random().toString(36).slice(2,7)}"><polygon points="22,2 40,13 40,31 22,42 4,31 4,13"/></clipPath></defs>
-    <polygon points="22,2 40,13 40,31 22,42 4,31 4,13" fill="#F2EDE0" stroke="${clr}" stroke-width="1.5"/>
-    <g><polygon points="22,2 40,13 40,31 22,42 4,31 4,13" fill="${clr}" opacity="0.85" clip-path="inset(${100-h}% 0 0 0)"/></g>
-    <polygon points="22,2 40,13 40,31 22,42 4,31 4,13" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="0.6"/>
-  </svg>`;
-}
-
-function pctClass(p){ return p>=70?'pct-high':(p>=35?'pct-mid':'pct-low'); }
-function barColor(p){ return p>=70?'var(--emerald-600)':(p>=35?'var(--gold-500)':'var(--clay-600)'); }
-
-function normDept(s){ return (s || '').toString().trim().toLowerCase().replace(/\s+/g, ''); }
-
-function deptStats(code){
-  const dept = DEPARTMENTS.find(d => d.code === code) || { code, name: code };
-  const targetCode = normDept(dept.code);
-  const targetName = normDept(dept.name);
-
-  const list = TASKS.filter(t => {
-    const td = normDept(t.department);
-    return td === targetCode || td === targetName;
-  });
-
-  const done = list.filter(t=>{
-    const s = getEffectiveStatus(t);
-    return s === 'Done' || s === 'Pending Review';
-  }).length;
-  const pct = list.length ? Math.round((done/list.length)*100) : 0;
-  return {total:list.length, done, pct};
-}
-
 /* ---------------- 100-POINT SCOREBOARD ---------------- */
 function renderScoreboard(el){
   let latestEvals = {};
@@ -614,6 +595,7 @@ function renderScoreboard(el){
   
   let todayVal = new Date(getTodayStr());
   todayVal.setHours(0,0,0,0);
+  let todayStr = getTodayStr();
 
   let empRows = evalUsers.map(u => {
     let evalData = latestEvals[u.name];
@@ -629,14 +611,22 @@ function renderScoreboard(el){
     });
 
     let completed = myTasks.filter(t => {
-        const s = getEffectiveStatus(t);
-        return s === 'Done' || s === 'Pending Review';
+        let displayStatus = t.status || 'Not Done';
+        if (t.frequency !== 'One-Time') {
+            let logEntry = TASK_LOGS.find(l => String(l.task_id) === String(t.id) && l.log_date === todayStr);
+            if (logEntry) {
+                displayStatus = logEntry.status;
+            } else {
+                displayStatus = 'Not Done'; 
+            }
+        }
+        return displayStatus === 'Done' || displayStatus === 'Pending Review';
     }).length;
+
     let total = myTasks.length;
     let autoScore = total > 0 ? (completed / total) * 65 : 0;
 
     let managerScore = evalData ? (parseFloat(evalData.goals_score || 0) + parseFloat(evalData.attendance_score || 0) + parseFloat(evalData.behaviour_score || 0)) : 0;
-    
     let totalScore = Math.round(autoScore + managerScore);
     
     let canEvaluate = false;
@@ -735,6 +725,7 @@ function openEvalModal(empName) {
     
     let todayVal = new Date(getTodayStr());
     todayVal.setHours(0,0,0,0);
+    let todayStr = getTodayStr();
 
     let myTasks = TASKS.filter(t => {
         if (t.assigned_to !== empName) return false;
@@ -747,9 +738,15 @@ function openEvalModal(empName) {
     });
 
     let completed = myTasks.filter(t => {
-        const s = getEffectiveStatus(t);
-        return s === 'Done' || s === 'Pending Review';
+        let displayStatus = t.status || 'Not Done';
+        if (t.frequency !== 'One-Time') {
+            let logEntry = TASK_LOGS.find(l => String(l.task_id) === String(t.id) && l.log_date === todayStr);
+            if (logEntry) displayStatus = logEntry.status;
+            else displayStatus = 'Not Done';
+        }
+        return displayStatus === 'Done' || displayStatus === 'Pending Review';
     }).length;
+
     let total = myTasks.length;
     let auto65 = total > 0 ? (completed / total) * 65 : 0;
 
@@ -867,10 +864,12 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
   
   if (viewRole === 'employee') {
       if (subType === 'checklist') {
-          list = list.filter(t => t.category === 'Check List' || t.category === 'Daily Task' || t.category === 'Target / Metric');
+          // Robust Category Matching
+          list = list.filter(t => isChecklistCat(t.category) || isTargetCat(t.category));
           titleText = 'My Checklist & Targets';
       } else if (subType === 'delegated') {
-          list = list.filter(t => t.category !== 'Check List' && t.category !== 'Daily Task' && t.category !== 'Target / Metric');
+          // Strict Delegated ONLY (no targets, no checklists)
+          list = list.filter(t => isDelegatedCat(t.category));
           titleText = 'My Delegated Tasks';
       } else if (subType === 'pending') {
           titleText = '⏳ Pending Tasks';
@@ -1139,12 +1138,15 @@ function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
   const statusClass = 'status-' + currentStatus.replace(/\s+/g,'-');
   const priClass = 'badge-' + (t.priority || 'Medium').toLowerCase();
   
-  let cat = t.category || 'Delegated Task';
-  if (cat === 'Daily Task') cat = 'Check List'; 
+  const isChk = isChecklistCat(t.category);
+  const isTgt = isTargetCat(t.category);
+  const isDel = isDelegatedCat(t.category);
   
   let catClass = 'badge-delegated';
-  if (cat === 'Check List') catClass = 'badge-checklist';
-  if (cat === 'Target / Metric') catClass = 'badge-metric';
+  if (isChk) catClass = 'badge-checklist';
+  if (isTgt) catClass = 'badge-metric';
+
+  let catDisplay = t.category || 'Delegated Task';
 
   let delayBadge = '';
   let dueText = '';
@@ -1178,13 +1180,13 @@ function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
 
   let statusOptions = '';
   if (viewRole === 'employee') {
-      if (cat === 'Check List' || cat === 'Target / Metric') {
+      if (isChk) {
           statusOptions = `
             <option value="Not Done" ${currentStatus==='Not Done' || currentStatus==='Pending' ? 'selected':''}>Not Done</option>
             <option value="Done" ${currentStatus==='Done'?'selected':''}>Done</option>
             <option value="On Leave" ${currentStatus==='On Leave'?'selected':''}>On Leave</option>
           `;
-      } else {
+      } else if (isDel) {
           if (currentStatus === 'Done') {
               statusOptions = `<option value="Done" selected disabled>Done (Approved)</option>`;
           } else {
@@ -1196,7 +1198,7 @@ function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
           }
       }
   } else {
-      if (cat === 'Check List' || cat === 'Target / Metric') {
+      if (isChk) {
           statusOptions = `
             <option value="Not Done" ${currentStatus==='Not Done' || currentStatus==='Pending' ? 'selected':''}>Not Done</option>
             <option value="Done" ${currentStatus==='Done'?'selected':''}>Done</option>
@@ -1213,16 +1215,17 @@ function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
   }
 
   let controlsHtml = '';
-  const isEmployeeLocked = (currentStatus === 'Done' && viewRole === 'employee' && cat === 'Delegated Task');
+  // Targets never get locked for employees (so they can edit the number if they need to). Checklists are also editable. Only Delegated Tasks get locked.
+  const isEmployeeLocked = (currentStatus === 'Done' && viewRole === 'employee' && isDel);
   const disabledAttr = isEmployeeLocked ? 'disabled style="background:#f1f5f9; cursor:not-allowed;"' : '';
   const saveBtnDisplay = isEmployeeLocked ? 'style="display:none;"' : '';
   
-  if (cat === 'Target / Metric') {
+  if (isTgt) {
       let achieveVal = t.currentNotes || '';
       controlsHtml = `
         ${delegationDropdown}
         <div style="background:var(--ivory-100); padding:7px 12px; border-radius:6px; font-weight:700; font-size:12.5px; color:var(--emerald-800); border:1px solid var(--line);">🎯 Target: ${t.score || 0}</div>
-        <input type="number" class="note-input" data-role="achieve-input" placeholder="Your Achievement..." value="${escapeAttr(achieveVal)}" style="width:160px;" ${disabledAttr}>
+        <input type="number" class="note-input" data-role="achieve-input" placeholder="Your Achievement..." value="${escapeAttr(achieveVal)}" ${disabledAttr}>
         <button class="btn btn-ghost btn-sm" data-role="save" ${saveBtnDisplay}>Save</button>
         ${viewRole !== 'employee' ? `<button class="btn btn-danger btn-sm" data-role="delete" title="Remove task">✕</button>` : ''}
       `;
@@ -1238,15 +1241,18 @@ function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
       `;
   }
 
+  let badgeTxt = 'Done';
+  if (isDel) badgeTxt = 'Approved';
+
   return `<div class="task-row" data-id="${t.id}">
     <div class="txt">
       <div class="n">${escapeHtml(t.text)}</div>
       <div class="meta" style="margin-bottom:8px;">
-        <span class="badge-category ${catClass}">${cat}</span>
+        <span class="badge-category ${catClass}">${escapeHtml(catDisplay)}</span>
         ${t.frequency ? `<span class="badge-frequency">🔁 ${t.frequency}</span>` : ''}
         <span class="badge-priority ${priClass}">${t.priority || 'Medium'}</span>
         ${dueText ? `<span class="${dueBadgeClass}">${dueText}</span>${delayBadge}` : ''}
-        ${currentStatus === 'Done' ? `<span class="badge-checklist" style="background:#dcfce7; color:#16a34a; border-color:#bbf7d0;">✔ ${cat === 'Delegated Task' ? 'Approved' : 'Done'}</span>` : ''}
+        ${currentStatus === 'Done' ? `<span class="badge-checklist" style="background:#dcfce7; color:#16a34a; border-color:#bbf7d0;">✔ ${badgeTxt}</span>` : ''}
       </div>
       <div class="meta">
         ${employeeAssignedBadge}
@@ -1283,7 +1289,7 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers, subType, isDelegatedVi
         let newStatus = select ? select.value : 'Not Done';
         let newNotes = '';
 
-        if (task.category === 'Target / Metric') {
+        if (isTargetCat(task.category)) {
           const achieveInput = row.querySelector('[data-role="achieve-input"]');
           newNotes = achieveInput ? achieveInput.value : '';
           const targetScore = parseFloat(task.score) || 0;
@@ -1302,7 +1308,6 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers, subType, isDelegatedVi
         await saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDelegatedView);
         showToast('Saved Successfully!');
         
-        // Fully load fresh data from database after save
         await loadData();
         renderDeptTasks(document.getElementById('content'), code, viewRole, subType);
       });
@@ -1395,7 +1400,7 @@ async function saveAllTasksForDay(el, code, viewRole, isDelegatedView) {
     let newStatus = select ? select.value : 'Not Done';
     let newNotes = '';
 
-    if (task.category === 'Target / Metric') {
+    if (isTargetCat(task.category)) {
       const achieveInput = row.querySelector('[data-role="achieve-input"]');
       newNotes = achieveInput ? achieveInput.value : '';
       const targetScore = parseFloat(task.score) || 0;
@@ -1555,7 +1560,7 @@ function check6PMRoutine() {
       setTimeout(() => { window._hasRun6PM = false; }, 65000);
 
       const pendingDaily = TASKS.filter(t => 
-        (t.category === 'Daily Task' || t.category === 'Check List') && 
+        (isChecklistCat(t.category)) && 
         t.status !== 'Done' && 
         t.mobile
       );
