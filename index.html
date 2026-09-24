@@ -332,8 +332,32 @@ window.scoreboardDeptFilters = window.scoreboardDeptFilters || [];
 let currentEvalEmp = '';
 
 // ==========================================
-// ROBUST CATEGORY PARSERS
+// ROBUST CATEGORY PARSERS & UTILS
 // ==========================================
+function normDept(val) {
+  if (!val) return '';
+  return String(val).toLowerCase().replace(/\s+/g, '');
+}
+
+function barColor(pct) {
+  if (pct < 40) return 'var(--clay-600)';
+  if (pct < 75) return 'var(--gold-600)';
+  return 'var(--emerald-700)';
+}
+
+function pctClass(pct) {
+  if (pct < 40) return 'pct-low';
+  if (pct < 75) return 'pct-mid';
+  return 'pct-high';
+}
+
+function gemSvg(pct) {
+  const color = barColor(pct);
+  return `<svg viewBox="0 0 24 24" fill="${color}" stroke="rgba(255,255,255,0.5)" stroke-width="1">
+            <polygon points="6 2, 18 2, 22 7, 12 22, 2 7" />
+          </svg>`;
+}
+
 function isChecklistCat(cat) {
   if (!cat) return false;
   let c = String(cat).toUpperCase();
