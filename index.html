@@ -544,7 +544,6 @@ function renderShell(){
         if(activeTab!=='alltasks') activeDeptCode = currentUser.role==='admin'? activeDeptCode : currentUser.department; 
 
         // Always switch to "Today" upon initially changing tabs so the default view is fresh.
-        // The user can still pick a past date using the date picker once they are on the tab.
         const today = getTodayStr();
         if (selectedLogDate !== today) {
             selectedLogDate = today;
@@ -968,6 +967,9 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
       const isToday = activeDateStr === getTodayStr();
 
       let taskDisplayList = list.filter(t => {
+          // REMOVED backwards date-hiding specifically to fix past history fill-ins
+          // Only hide One-Time tasks if we look at a calendar date before they were created.
+          // For Daily Tasks, ALWAYS show them on past dates so employees can fill their history.
           const anchorDateStr = t.start_date || getTodayStr();
           let dStart = new Date(anchorDateStr);
           if (isNaN(dStart.valueOf())) dStart = new Date();
@@ -977,7 +979,10 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
           
           dStart.setHours(0,0,0,0); 
           dSelect.setHours(0,0,0,0);
-          if (dSelect < dStart) return false;
+          
+          if (t.frequency === 'One-Time' && dSelect < dStart) {
+              return false;
+          }
           return true;
       }).map(t => {
         const logEntry = ALL_TASK_LOGS.find(l => l && String(l.task_id) === String(t.id) && l.log_date === activeDateStr);
