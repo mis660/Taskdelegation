@@ -399,27 +399,16 @@ async function loadAllTaskLogs() {
   }
 }
 
-// Fixed getEffectiveStatus with strong defensive checks
-function getEffectiveStatus(task){
+// Ensure robust fallback to "Today" to prevent crashes from missing dates
+function getEffectiveStatus(task, specificDateStr = null){
   try {
       if (!task) return 'Not Done';
       if (task.frequency === 'One-Time') return task.status || 'Not Done';
       
-      const logsForTask = ALL_TASK_LOGS.filter(l => l && String(l.task_id) === String(task.id));
-      if (logsForTask.length === 0) return task.status || 'Not Done';
-
-      const latest = logsForTask.reduce((a, b) => {
-        if (!a) return b;
-        if (!b) return a;
-        const aDate = a.log_date || '';
-        const bDate = b.log_date || '';
-        if (aDate !== bDate) return aDate > bDate ? a : b;
-        const au = a.updated_at || '';
-        const bu = b.updated_at || '';
-        return au > bu ? a : b;
-      }, null);
-
-      return latest ? (latest.status || 'Not Done') : 'Not Done';
+      const targetDate = specificDateStr || getTodayStr();
+      const logEntry = ALL_TASK_LOGS.find(l => l && String(l.task_id) === String(task.id) && l.log_date === targetDate);
+      
+      return logEntry ? (logEntry.status || 'Not Done') : 'Not Done';
   } catch(e) {
       return 'Not Done';
   }
@@ -543,7 +532,6 @@ function renderShell(){
         activeTab = el.dataset.tab; 
         if(activeTab!=='alltasks') activeDeptCode = currentUser.role==='admin'? activeDeptCode : currentUser.department; 
 
-        // Always switch to "Today" upon initially changing tabs so the default view is fresh.
         const today = getTodayStr();
         if (selectedLogDate !== today) {
             selectedLogDate = today;
@@ -574,37 +562,37 @@ function renderContent(){
   if(activeTab === 'mypending') return renderDeptTasks(el, currentUser.department, 'employee', 'pending');
 }
 
-/* ---------------- GEM METER & HELPER FUNCTIONS ---------------- */
-function gemSvg(pct){
-  const safePct = Number(pct) || 0;
-  const clr = safePct >= 70 ? 'var(--emerald-600)' : safePct >= 35 ? 'var(--gold-500)' : 'var(--clay-600)';
-  const h = Math.max(4, safePct);
-  return `<svg viewBox="0 0 44 44">
-    <defs><clipPath id="clip-${Math.random().toString(36).slice(2,7)}"><polygon points="22,2 40,13 40,31 22,42 4,31 4,13"/></clipPath></defs>
-    <polygon points="22,2 40,13 40,31 22,42 4,31 4,13" fill="#F2EDE0" stroke="${clr}" stroke-width="1.5"/>
-    <g><polygon points="22,2 40,13 40,31 22,42 4,31 4,13" fill="${clr}" opacity="0.85" clip-path="inset(${100-h}% 0 0 0)"/></g>
-    <polygon points="22,2 40,13 40,31 22,42 4,31 4,13" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="0.6"/>
-  </svg>`;
-}
-
-function pctClass(p){ return p>=70?'pct-high':(p>=35?'pct-mid':'pct-low'); }
-function barColor(p){ return p>=70?'var(--emerald-600)':(p>=35?'var(--gold-500)':'var(--clay-600)'); }
-
-function normDept(s){ return (s || '').toString().trim().toLowerCase().replace(/\s+/g, ''); }
-
+/* ---------------- OVERVIEW & SCOREBOARD STATS ---------------- */
 function deptStats(code){
   const dept = DEPARTMENTS.find(d => d && d.code === code) || { code: code, name: code };
   const targetCode = normDept(dept.code);
   const targetName = normDept(dept.name);
+  
+  const todayVal = new Date(getTodayStr());
+  todayVal.setHours(0,0,0,0);
+  const dayName = todayVal.toLocaleDateString('en-US', { weekday: 'long' });
 
   const list = TASKS.filter(t => {
     if(!t) return false;
     const td = normDept(t.department);
-    return td === targetCode || td === targetName;
+    if (td !== targetCode && td !== targetName) return false;
+    
+    // Ignore tasks not scheduled for today in overall company stats
+    if (t.start_date) {
+        let sDate = new Date(t.start_date);
+        if (!isNaN(sDate.valueOf())) {
+            sDate.setHours(0,0,0,0);
+            if (sDate > todayVal) return false;
+        }
+    }
+    if (t.frequency && t.frequency.startsWith('Weekly') && !t.frequency.includes(dayName)) {
+        return false;
+    }
+    return true;
   });
 
   const done = list.filter(t=>{
-    const s = getEffectiveStatus(t);
+    const s = getEffectiveStatus(t, getTodayStr());
     return s === 'Done' || s === 'Pending Review';
   }).length;
   const pct = list.length ? Math.round((done/list.length)*100) : 0;
@@ -644,7 +632,7 @@ function renderScoreboard(el){
       
       let todayVal = new Date(getTodayStr());
       todayVal.setHours(0,0,0,0);
-      let todayStr = getTodayStr();
+      let dayName = todayVal.toLocaleDateString('en-US', { weekday: 'long' });
 
       let empRows = evalUsers.map(u => {
         let evalData = latestEvals[u.name];
@@ -653,24 +641,18 @@ function renderScoreboard(el){
             if (!t || t.assigned_to !== u.name) return false;
             if (t.start_date) {
                 let sDate = new Date(t.start_date);
-                if (isNaN(sDate.valueOf())) sDate = new Date();
-                sDate.setHours(0,0,0,0);
-                if (sDate > todayVal) return false; 
+                if (!isNaN(sDate.valueOf())) {
+                    sDate.setHours(0,0,0,0);
+                    if (sDate > todayVal) return false; 
+                }
             }
+            if (t.frequency && t.frequency.startsWith('Weekly') && !t.frequency.includes(dayName)) return false;
             return true;
         });
 
         let completed = myTasks.filter(t => {
-            let displayStatus = t.status || 'Not Done';
-            if (t.frequency !== 'One-Time') {
-                let logEntry = TASK_LOGS.find(l => l && String(l.task_id) === String(t.id) && l.log_date === todayStr);
-                if (logEntry) {
-                    displayStatus = logEntry.status;
-                } else {
-                    displayStatus = 'Not Done'; 
-                }
-            }
-            return displayStatus === 'Done' || displayStatus === 'Pending Review';
+            const s = getEffectiveStatus(t, getTodayStr());
+            return s === 'Done' || s === 'Pending Review';
         }).length;
 
         let total = myTasks.length;
@@ -779,27 +761,24 @@ function openEvalModal(empName) {
     
     let todayVal = new Date(getTodayStr());
     todayVal.setHours(0,0,0,0);
-    let todayStr = getTodayStr();
+    let dayName = todayVal.toLocaleDateString('en-US', { weekday: 'long' });
 
     let myTasks = TASKS.filter(t => {
         if (!t || t.assigned_to !== empName) return false;
         if (t.start_date) {
             let sDate = new Date(t.start_date);
-            if (isNaN(sDate.valueOf())) sDate = new Date();
-            sDate.setHours(0,0,0,0);
-            if (sDate > todayVal) return false; 
+            if (!isNaN(sDate.valueOf())) {
+                sDate.setHours(0,0,0,0);
+                if (sDate > todayVal) return false; 
+            }
         }
+        if (t.frequency && t.frequency.startsWith('Weekly') && !t.frequency.includes(dayName)) return false;
         return true;
     });
 
     let completed = myTasks.filter(t => {
-        let displayStatus = t.status || 'Not Done';
-        if (t.frequency !== 'One-Time') {
-            let logEntry = TASK_LOGS.find(l => l && String(l.task_id) === String(t.id) && l.log_date === todayStr);
-            if (logEntry) displayStatus = logEntry.status;
-            else displayStatus = 'Not Done';
-        }
-        return displayStatus === 'Done' || displayStatus === 'Pending Review';
+        const s = getEffectiveStatus(t, getTodayStr());
+        return s === 'Done' || s === 'Pending Review';
     }).length;
 
     let total = myTasks.length;
@@ -870,7 +849,7 @@ function renderOverview(el){
       const totalTasks = TASKS.length;
       const totalDone = TASKS.filter(t=>{
         if(!t) return false;
-        const s = getEffectiveStatus(t);
+        const s = getEffectiveStatus(t, getTodayStr());
         return s === 'Done';
       }).length;
       const overallPct = totalTasks ? Math.round((totalDone/totalTasks)*100) : 0;
@@ -959,34 +938,32 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
           }
       }
 
-      // Restore Date Picker only for Checklists / General Dept view
       const activeDateStr = (isDelegatedView || isPendingView) ? getTodayStr() : selectedLogDate;
       let dateObj = new Date(activeDateStr + 'T00:00:00');
       if (isNaN(dateObj.valueOf())) dateObj = new Date();
       const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
-      const isToday = activeDateStr === getTodayStr();
 
       let taskDisplayList = list.filter(t => {
-          // REMOVED backwards date-hiding specifically to fix past history fill-ins
-          // Only hide One-Time tasks if we look at a calendar date before they were created.
-          // For Daily Tasks, ALWAYS show them on past dates so employees can fill their history.
+          // Hide tasks that haven't started yet
           const anchorDateStr = t.start_date || getTodayStr();
           let dStart = new Date(anchorDateStr);
-          if (isNaN(dStart.valueOf())) dStart = new Date();
-          
-          let dSelect = new Date(activeDateStr);
-          if (isNaN(dSelect.valueOf())) dSelect = new Date();
-          
-          dStart.setHours(0,0,0,0); 
-          dSelect.setHours(0,0,0,0);
-          
-          if (t.frequency === 'One-Time' && dSelect < dStart) {
-              return false;
+          if (!isNaN(dStart.valueOf())) {
+              let dSelect = new Date(activeDateStr);
+              if (!isNaN(dSelect.valueOf())) {
+                  dStart.setHours(0,0,0,0); 
+                  dSelect.setHours(0,0,0,0);
+                  if (t.frequency === 'One-Time' && dSelect < dStart) return false;
+                  if (t.frequency !== 'One-Time' && dSelect < dStart) return false;
+              }
           }
+
+          // Auto-hide Weekly tasks on the wrong day
+          if (t.frequency && t.frequency.startsWith('Weekly')) {
+              if (!t.frequency.includes(dayName)) return false;
+          }
+
           return true;
       }).map(t => {
-        const logEntry = ALL_TASK_LOGS.find(l => l && String(l.task_id) === String(t.id) && l.log_date === activeDateStr);
-        
         let displayStatus = 'Not Done';
         let displayNotes = '';
 
@@ -994,12 +971,14 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
             displayStatus = t.status || 'Not Done';
             displayNotes = t.notes || '';
         } else {
+            const logEntry = ALL_TASK_LOGS.find(l => l && String(l.task_id) === String(t.id) && l.log_date === activeDateStr);
             if (logEntry) {
-                displayStatus = logEntry.status;
-                displayNotes = logEntry.notes;
-            } else if (isToday) {
-                displayStatus = t.status || 'Not Done';
-                displayNotes = t.notes || '';
+                displayStatus = logEntry.status || 'Not Done';
+                displayNotes = logEntry.notes || '';
+            } else {
+                // FORCE RESET: If there is no specific log for this calendar date, it is definitely Not Done yet.
+                displayStatus = 'Not Done';
+                displayNotes = '';
             }
         }
 
@@ -1477,15 +1456,6 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDe
       };
 
       await supabaseClient.from('task_logs').upsert(logPayload, { onConflict: 'task_id, log_date' });
-
-      task.status = newStatus;
-      task.notes = newNotes;
-      await supabaseClient.from('tasks').update({
-          status: newStatus,
-          notes: newNotes,
-          updated_by: currentUser.name,
-          updated_at: new Date().toISOString()
-      }).eq('id', task.id);
   }
 }
 
@@ -1541,15 +1511,6 @@ async function saveAllTasksForDay(el, code, viewRole, isDelegatedView) {
           updated_by: currentUser.name,
           updated_at: new Date().toISOString()
         });
-
-        task.status = newStatus;
-        task.notes = newNotes;
-        supabaseClient.from('tasks').update({
-            status: newStatus,
-            notes: newNotes,
-            updated_by: currentUser.name,
-            updated_at: new Date().toISOString()
-        }).eq('id', task.id).then();
     }
   }
 
