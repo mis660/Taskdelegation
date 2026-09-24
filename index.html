@@ -423,7 +423,6 @@ async function loadAllTaskLogs() {
   }
 }
 
-// Fixed getEffectiveStatus with strong defensive checks
 function getEffectiveStatus(task, specificDateStr = null){
   try {
       if (!task) return 'Not Done';
@@ -1463,14 +1462,15 @@ function wireTaskRowEvents(el, code, viewRole, deptUsers, subType, isDelegatedVi
           newNotes = noteInput ? noteInput.value : '';
         }
 
-        // Pass the explicit virtual date to the save function so it saves for the exact missed date
         const vDateToSave = row.dataset.vdate || selectedLogDate;
 
-        await saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDelegatedView, vDateToSave);
-        showToast('Saved Successfully!');
-        
-        await loadData();
-        renderDeptTasks(document.getElementById('content'), code, viewRole, subType);
+        // Await the save result and strictly check for success before reloading
+        const success = await saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDelegatedView, vDateToSave);
+        if (success) {
+            showToast('Saved Successfully!');
+            await loadData();
+            renderDeptTasks(document.getElementById('content'), code, viewRole, subType);
+        }
       });
     }
 
@@ -1511,27 +1511,59 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDe
   }
 
   if (task.frequency === 'One-Time') {
-      await supabaseClient.from('tasks').update({
+      const { error } = await supabaseClient.from('tasks').update({
           status: newStatus,
           notes: newNotes,
           updated_by: currentUser.name,
           updated_at: new Date().toISOString()
       }).eq('id', task.id);
+      
+      if (error) {
+          alert("Database Error saving task: " + error.message);
+          return false;
+      }
+      
       task.status = newStatus;
       task.notes = newNotes;
+      return true;
   } else {
       const activeDate = explicitVDate || (isDelegatedView || activeTab === 'mypending' ? getTodayStr() : selectedLogDate);
-      const logPayload = {
-        task_id: String(task.id),
-        assigned_to: currentAssignee,
-        log_date: activeDate,
-        status: newStatus,
-        notes: newNotes,
-        updated_by: currentUser.name,
-        updated_at: new Date().toISOString()
-      };
+      
+      // Safely check if a log already exists to avoid strict onConflict constraint requirements
+      const { data: existingLog } = await supabaseClient
+          .from('task_logs')
+          .select('id')
+          .eq('task_id', task.id)
+          .eq('log_date', activeDate)
+          .maybeSingle();
 
-      await supabaseClient.from('task_logs').upsert(logPayload, { onConflict: 'task_id, log_date' });
+      let saveErr;
+      if (existingLog) {
+          const { error } = await supabaseClient.from('task_logs').update({
+              status: newStatus,
+              notes: newNotes,
+              assigned_to: currentAssignee,
+              updated_by: currentUser.name,
+              updated_at: new Date().toISOString()
+          }).eq('id', existingLog.id);
+          saveErr = error;
+      } else {
+          const { error } = await supabaseClient.from('task_logs').insert([{
+              task_id: task.id,
+              assigned_to: currentAssignee,
+              log_date: activeDate,
+              status: newStatus,
+              notes: newNotes,
+              updated_by: currentUser.name,
+              updated_at: new Date().toISOString()
+          }]);
+          saveErr = error;
+      }
+
+      if (saveErr) {
+          alert("Database Error updating daily log: " + saveErr.message);
+          return false;
+      }
 
       // Only update master row cache if it was for today
       if (activeDate === getTodayStr()) {
@@ -1544,6 +1576,7 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDe
               updated_at: new Date().toISOString()
           }).eq('id', task.id);
       }
+      return true;
   }
 }
 
@@ -1551,8 +1584,8 @@ async function saveAllTasksForDay(el, code, viewRole, isDelegatedView) {
   const rows = el.querySelectorAll('.task-row');
   if (rows.length === 0) return;
 
-  let upsertList = [];
   const baseActiveDate = (isDelegatedView || activeTab === 'mypending') ? getTodayStr() : selectedLogDate;
+  let successCount = 0;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -1570,62 +1603,56 @@ async function saveAllTasksForDay(el, code, viewRole, isDelegatedView) {
       const targetScore = parseFloat(task.score) || 0;
       const achievedVal = parseFloat(newNotes) || 0;
       
-      if (achievedVal >= targetScore && targetScore > 0) {
-          newStatus = 'Done';
-      } else {
-          newStatus = 'Not Done';
-      }
+      if (achievedVal >= targetScore && targetScore > 0) newStatus = 'Done';
+      else newStatus = 'Not Done';
     } else {
       const noteInput = row.querySelector('[data-role="notes"]');
       newNotes = noteInput ? noteInput.value : '';
     }
 
     if (task.frequency === 'One-Time') {
-        await supabaseClient.from('tasks').update({
-            status: newStatus,
-            notes: newNotes,
-            updated_by: currentUser.name,
-            updated_at: new Date().toISOString()
+        const { error } = await supabaseClient.from('tasks').update({
+            status: newStatus, notes: newNotes, updated_by: currentUser.name, updated_at: new Date().toISOString()
         }).eq('id', task.id);
-        task.status = newStatus;
-        task.notes = newNotes;
+        
+        if (!error) { 
+            task.status = newStatus; task.notes = newNotes; 
+            successCount++; 
+        }
     } else {
         const rowVDate = row.dataset.vdate || baseActiveDate;
-        upsertList.push({
-          task_id: String(task.id),
-          assigned_to: task.assigned_to,
-          log_date: rowVDate,
-          status: newStatus,
-          notes: newNotes,
-          updated_by: currentUser.name,
-          updated_at: new Date().toISOString()
-        });
+        
+        const { data: existingLog } = await supabaseClient.from('task_logs')
+            .select('id').eq('task_id', task.id).eq('log_date', rowVDate).maybeSingle();
 
-        if (rowVDate === getTodayStr()) {
-            task.status = newStatus;
-            task.notes = newNotes;
-            supabaseClient.from('tasks').update({
-                status: newStatus,
-                notes: newNotes,
-                updated_by: currentUser.name,
-                updated_at: new Date().toISOString()
-            }).eq('id', task.id).then();
+        let saveErr;
+        if (existingLog) {
+            const { error } = await supabaseClient.from('task_logs').update({
+                status: newStatus, notes: newNotes, updated_by: currentUser.name, updated_at: new Date().toISOString()
+            }).eq('id', existingLog.id);
+            saveErr = error;
+        } else {
+            const { error } = await supabaseClient.from('task_logs').insert([{
+                task_id: task.id, assigned_to: task.assigned_to, log_date: rowVDate,
+                status: newStatus, notes: newNotes, updated_by: currentUser.name, updated_at: new Date().toISOString()
+            }]);
+            saveErr = error;
+        }
+
+        if (!saveErr) {
+            successCount++;
+            if (rowVDate === getTodayStr()) {
+                task.status = newStatus;
+                task.notes = newNotes;
+                supabaseClient.from('tasks').update({
+                    status: newStatus, notes: newNotes, updated_by: currentUser.name, updated_at: new Date().toISOString()
+                }).eq('id', task.id).then();
+            }
         }
     }
   }
 
-  if (upsertList.length > 0) {
-      const { error } = await supabaseClient
-        .from('task_logs')
-        .upsert(upsertList, { onConflict: 'task_id, log_date' });
-
-      if (error) {
-        alert("Error saving daily logs: " + error.message);
-        return;
-      }
-  }
-
-  showToast('All visible tasks saved successfully!');
+  showToast(`Successfully saved ${successCount} tasks!`);
   await loadData();
   renderContent(); 
 }
