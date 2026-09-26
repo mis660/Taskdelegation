@@ -966,7 +966,6 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
       let dateObj = new Date(activeDateStr + 'T00:00:00');
       if (isNaN(dateObj.valueOf())) dateObj = new Date();
       const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
-      const isToday = activeDateStr === getTodayStr();
 
       let rawTasks = [];
 
@@ -983,7 +982,7 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
               
               let iterD = new Date(dStart);
               let minDate = new Date(todayD);
-              minDate.setDate(todayD.getDate() - 15); // Look back max 15 days
+              minDate.setDate(todayD.getDate() - 30); // Expanded lookback to 30 days
               if (iterD < minDate) iterD = new Date(minDate);
 
               while (iterD <= todayD) {
@@ -992,10 +991,14 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
                   
                   let shouldAdd = true;
                   if (t.frequency && t.frequency.startsWith('Weekly') && !t.frequency.includes(iterDayName)) shouldAdd = false;
+                  // Ensure we don't show pending for dates before the task even existed
+                  if (iterD < dStart) shouldAdd = false;
                   
                   if (shouldAdd) {
                       const logEntry = ALL_TASK_LOGS.find(l => l && String(l.task_id) === String(t.id) && l.log_date === dStr);
+                      // If no log exists for this specific day, it defaults to Not Done.
                       let displayStatus = logEntry ? logEntry.status : 'Not Done';
+                      
                       if (displayStatus === 'Not Done' || displayStatus === 'Pending') {
                           rawTasks.push({
                               ...t,
@@ -1013,8 +1016,11 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
               let dSelect = new Date(activeDateStr);
               if (isNaN(dSelect.valueOf())) dSelect = new Date();
               dSelect.setHours(0,0,0,0);
+              
               if (t.frequency === 'One-Time' && dSelect < dStart) return;
               if (t.frequency !== 'One-Time' && t.frequency.startsWith('Weekly') && !t.frequency.includes(dayName)) return;
+              // Prevent showing daily tasks before their official start date
+              if (t.frequency !== 'One-Time' && dSelect < dStart) return; 
 
               const logEntry = ALL_TASK_LOGS.find(l => l && String(l.task_id) === String(t.id) && l.log_date === activeDateStr);
               let displayStatus = 'Not Done';
@@ -1027,8 +1033,11 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
                   if (logEntry) {
                       displayStatus = logEntry.status;
                       displayNotes = logEntry.notes;
-                  } else if (isToday) {
-                      displayStatus = t.status || 'Not Done';
+                  } else {
+                      // AUTO-RESET: If no specific log is found for the active date, force 'Not Done'
+                      // This completely removes the bug where the system "remembers" yesterday's completion status.
+                      displayStatus = 'Not Done';
+                      displayNotes = '';
                   }
               }
 
