@@ -386,8 +386,36 @@ async function loadData(){
     USERS.forEach(u => { if(u.role) u.role = u.role.toLowerCase(); });
 
     const { data: tData } = await supabaseClient.from('tasks').select('*');
-    TASKS = tData || [];
-    
+    let fetchedTasks = tData || [];
+
+    // --- GLOBAL DEDUPLICATOR (Solves Duplicate Master Task Issue) ---
+    // If the database has multiple identical tasks due to accidental double-clicking,
+    // this instantly groups them by Name + Assignee + Dept + Frequency and only keeps the newest one.
+    let uniqueMaster = new Map();
+    fetchedTasks.forEach(t => {
+        const textKey = (t.text || '').trim().toLowerCase();
+        const assigneeKey = (t.assigned_to || '').trim().toLowerCase();
+        const deptKey = (t.department || '').trim().toLowerCase();
+        const freqKey = (t.frequency || '').trim().toLowerCase();
+        
+        const key = `${textKey}_${assigneeKey}_${deptKey}_${freqKey}`;
+
+        if (!uniqueMaster.has(key)) {
+            uniqueMaster.set(key, t);
+        } else {
+            let existing = uniqueMaster.get(key);
+            let dNew = new Date(t.start_date || '1970-01-01');
+            let dOld = new Date(existing.start_date || '1970-01-01');
+            
+            // Keep the task with the most recent start_date
+            if (dNew >= dOld) {
+                uniqueMaster.set(key, t);
+            }
+        }
+    });
+    TASKS = Array.from(uniqueMaster.values());
+    // ----------------------------------------------------------------
+
     await loadDailyLogs(selectedLogDate);
     await loadAllTaskLogs();
 
@@ -1053,27 +1081,7 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
           }
       });
 
-      // --- START NEW DEDUPLICATION FILTER ---
-      let uniqueTasksMap = new Map();
-      rawTasks.forEach(t => {
-          const assignee = t.assigned_to ? t.assigned_to.toLowerCase() : 'unassigned';
-          // Key ignores actual task ID, matching identical task names for the same date and same person
-          const key = `${(t.text || '').trim().toLowerCase()}_${t.virtual_date}_${assignee}`;
-          
-          if (!uniqueTasksMap.has(key)) {
-              uniqueTasksMap.set(key, t);
-          } else {
-              // If duplicate found, keep the one that was created most recently
-              const existing = uniqueTasksMap.get(key);
-              let dNew = new Date(t.start_date || '1970-01-01');
-              let dOld = new Date(existing.start_date || '1970-01-01');
-              if (dNew > dOld) {
-                  uniqueTasksMap.set(key, t);
-              }
-          }
-      });
-      let taskDisplayList = Array.from(uniqueTasksMap.values());
-      // --- END NEW DEDUPLICATION FILTER ---
+      let taskDisplayList = rawTasks;
 
       if (taskSearchTerm) {
         const term = taskSearchTerm.toLowerCase();
