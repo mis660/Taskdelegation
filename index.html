@@ -388,9 +388,8 @@ async function loadData(){
     const { data: tData } = await supabaseClient.from('tasks').select('*');
     let fetchedTasks = tData || [];
 
-    // --- GLOBAL DEDUPLICATOR (Solves Duplicate Master Task Issue) ---
-    // If the database has multiple identical tasks due to accidental double-clicking,
-    // this instantly groups them by Name + Assignee + Dept + Frequency and only keeps the newest one.
+    // --- AGGRESSIVE MASTER TASK MERGER ---
+    // Safely unifies identical database entries so duplicate start dates combine into ONE task history
     let uniqueMaster = new Map();
     fetchedTasks.forEach(t => {
         const textKey = (t.text || '').trim().toLowerCase();
@@ -401,20 +400,25 @@ async function loadData(){
         const key = `${textKey}_${assigneeKey}_${deptKey}_${freqKey}`;
 
         if (!uniqueMaster.has(key)) {
+            t.all_ids = [String(t.id)];
             uniqueMaster.set(key, t);
         } else {
             let existing = uniqueMaster.get(key);
-            let dNew = new Date(t.start_date || '1970-01-01');
-            let dOld = new Date(existing.start_date || '1970-01-01');
+            if (!existing.all_ids.includes(String(t.id))) {
+                existing.all_ids.push(String(t.id));
+            }
             
-            // Keep the task with the most recent start_date
-            if (dNew >= dOld) {
-                uniqueMaster.set(key, t);
+            // Critical: Keep the OLDEST start date so the backlog reaches all the way back
+            let dNew = new Date(t.start_date || '2099-01-01');
+            let dOld = new Date(existing.start_date || '2099-01-01');
+            
+            if (dNew < dOld) {
+                existing.start_date = t.start_date;
             }
         }
     });
     TASKS = Array.from(uniqueMaster.values());
-    // ----------------------------------------------------------------
+    // -------------------------------------
 
     await loadDailyLogs(selectedLogDate);
     await loadAllTaskLogs();
@@ -457,7 +461,7 @@ function getEffectiveStatus(task, specificDateStr = null){
       if (task.frequency === 'One-Time') return task.status || 'Not Done';
       
       const targetDate = specificDateStr || getTodayStr();
-      const logEntry = ALL_TASK_LOGS.find(l => l && String(l.task_id) === String(task.id) && l.log_date === targetDate);
+      const logEntry = ALL_TASK_LOGS.find(l => l && (task.all_ids ? task.all_ids.includes(String(l.task_id)) : String(l.task_id) === String(task.id)) && l.log_date === targetDate);
       
       return logEntry ? (logEntry.status || 'Not Done') : 'Not Done';
   } catch(e) {
@@ -1013,6 +1017,7 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
               minDate.setDate(todayD.getDate() - 30); // Expanded lookback to 30 days
               if (iterD < minDate) iterD = new Date(minDate);
 
+              // Iterate forwards from oldest date to today
               while (iterD <= todayD) {
                   let dStr = iterD.toLocaleDateString('en-CA');
                   let iterDayName = iterD.toLocaleDateString('en-US', { weekday: 'long' });
@@ -1023,8 +1028,8 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
                   if (iterD < dStart) shouldAdd = false;
                   
                   if (shouldAdd) {
-                      const logEntry = ALL_TASK_LOGS.find(l => l && String(l.task_id) === String(t.id) && l.log_date === dStr);
-                      // If no log exists for this specific day, it defaults to Not Done.
+                      // Uses the merged ID array so if ANY of the physical duplicates were marked done, it counts as Done
+                      const logEntry = ALL_TASK_LOGS.find(l => l && (t.all_ids ? t.all_ids.includes(String(l.task_id)) : String(l.task_id) === String(t.id)) && l.log_date === dStr);
                       let displayStatus = logEntry ? logEntry.status : 'Not Done';
                       
                       if (displayStatus === 'Not Done' || displayStatus === 'Pending') {
@@ -1035,6 +1040,10 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
                               currentNotes: logEntry ? logEntry.notes : '',
                               log_updated_at: logEntry ? logEntry.updated_at : null
                           });
+                          
+                          // BREAK HERE: Only show the OLDEST missed day in Pending tasks.
+                          // This completely stops 10 duplicate rows from flooding the UI.
+                          break;
                       }
                   }
                   iterD.setDate(iterD.getDate() + 1);
@@ -1050,7 +1059,7 @@ function renderDeptTasks(el, code, viewRole, subType = 'all'){
               // Prevent showing daily tasks before their official start date
               if (t.frequency !== 'One-Time' && dSelect < dStart) return; 
 
-              const logEntry = ALL_TASK_LOGS.find(l => l && String(l.task_id) === String(t.id) && l.log_date === activeDateStr);
+              const logEntry = ALL_TASK_LOGS.find(l => l && (t.all_ids ? t.all_ids.includes(String(l.task_id)) : String(l.task_id) === String(t.id)) && l.log_date === activeDateStr);
               let displayStatus = 'Not Done';
               let displayNotes = '';
 
@@ -1348,7 +1357,7 @@ function taskRowHtml(t, viewRole, deptUsers = [], isDelegatedView = false){
 
   // Display virtual backlog date if present
   let backlogBadge = (t.virtual_date && t.virtual_date !== getTodayStr() && t.frequency !== 'One-Time') 
-      ? `<span class="badge-overdue" style="margin-right:8px; border-color:#f87171; color:#991b1b; background:#fef2f2;">⏳ Missed: ${escapeHtml(t.virtual_date)}</span>` 
+      ? `<span class="badge-overdue" style="margin-right:8px; border-color:#f87171; color:#991b1b; background:#fef2f2;">⏳ Backlog: ${escapeHtml(t.virtual_date)}</span>` 
       : '';
 
   // Extract true "Last Updated" timestamp for specific day
@@ -1565,13 +1574,15 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDe
   } else {
       const activeDate = explicitVDate || (isDelegatedView || activeTab === 'mypending' ? getTodayStr() : selectedLogDate);
       
-      // Safely check if a log already exists to avoid strict onConflict constraint requirements
-      const { data: existingLog } = await supabaseClient
+      // Look up log history using ANY of the merged duplicated task IDs
+      const { data: existingLogs } = await supabaseClient
           .from('task_logs')
           .select('id')
-          .eq('task_id', task.id)
+          .in('task_id', task.all_ids || [task.id])
           .eq('log_date', activeDate)
-          .maybeSingle();
+          .limit(1);
+
+      const existingLog = existingLogs && existingLogs.length > 0 ? existingLogs[0] : null;
 
       let saveErr;
       if (existingLog) {
@@ -1585,7 +1596,7 @@ async function saveSingleTaskLog(task, newStatus, newNotes, row, deptUsers, isDe
           saveErr = error;
       } else {
           const { error } = await supabaseClient.from('task_logs').insert([{
-              task_id: task.id,
+              task_id: task.id, // Save against the primary surviving master ID
               assigned_to: currentAssignee,
               log_date: activeDate,
               status: newStatus,
@@ -1658,8 +1669,13 @@ async function saveAllTasksForDay(el, code, viewRole, isDelegatedView) {
     } else {
         const rowVDate = row.dataset.vdate || baseActiveDate;
         
-        const { data: existingLog } = await supabaseClient.from('task_logs')
-            .select('id').eq('task_id', task.id).eq('log_date', rowVDate).maybeSingle();
+        const { data: existingLogs } = await supabaseClient.from('task_logs')
+            .select('id')
+            .in('task_id', task.all_ids || [task.id])
+            .eq('log_date', rowVDate)
+            .limit(1);
+
+        const existingLog = existingLogs && existingLogs.length > 0 ? existingLogs[0] : null;
 
         let saveErr;
         if (existingLog) {
